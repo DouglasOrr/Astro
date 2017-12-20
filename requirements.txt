@@ -1,0 +1,5 @@
+chainer
+flake8
+jupyter
+numpy
+pytest
