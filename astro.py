@@ -8,45 +8,42 @@ import numpy as np
 
 Bodies = collections.namedtuple(
     'Bodies',
-    ('x', 'dx', 'b', 'mass', 'radius', 'ttl'))
+    ('x', 'dx', 'b', 'ttl'))
 
 State = collections.namedtuple(
     'State',
     ('ships', 'planets', 'bullets'))
 
 Config = collections.namedtuple(
-    'Config',
-    # constants
-    ('gravity',
-     'dt',
-     'bullet_spawn',
-     'bullet_ttl',
-     'bullet_speed',
-     'ship_thrust',
-     'ship_rspeed',
-     # initialization
-     'planet_orbit',
-     'planet_mass',
-     'planet_radius',
-     'ship_position',
-     'ship_radius'))
+    'Config', (
+        'gravity',
+        'dt',
+        'bullet_spawn',
+        'bullet_ttl',
+        'bullet_speed',
+        'ship_thrust',
+        'ship_rspeed',
+        'ship_position',
+        'ship_radius',
+        'planet_orbit',
+        'planet_mass',
+        'planet_radius',
+    ))
 
 
 DEFAULT_CONFIG = Config(
-    # constants
     gravity=0.8,
     dt=0.1,
     bullet_spawn=0.5,
     bullet_ttl=1.0,
     bullet_speed=1,
     ship_thrust=0.5,
-    ship_rspeed=1.0,
-    # initialization
+    ship_rspeed=2.0,
+    ship_position=np.array([0.9, 0.9], dtype=np.float32),
+    ship_radius=0.01,
     planet_orbit=0.5,
     planet_mass=1.0,
     planet_radius=0.1,
-    ship_position=np.array([0.9, 0.9], dtype=np.float32),
-    ship_radius=0.01,
 )
 
 
@@ -82,43 +79,37 @@ def create(config, seed):
     planet_1_dx = -planet_0_dx
 
     return State(
-        Bodies(np.stack((ship_0, ship_1), axis=0),
-               np.zeros((2, 2), dtype=np.float32),
-               np.zeros(2, dtype=np.float32),
-               np.zeros(2, dtype=np.float32),
-               np.full(2, config.ship_radius, dtype=np.float32),
-               np.full(2, np.inf, dtype=np.float32)),
-        Bodies(np.stack((planet_0, planet_1), axis=0),
-               np.stack((planet_0_dx, planet_1_dx), axis=0),
-               np.zeros(2, dtype=np.float32),
-               config.planet_mass * np.ones(2, dtype=np.float32),
-               config.planet_radius * np.ones(2, dtype=np.float32),
-               np.full(2, np.inf, dtype=np.float32)),
-        Bodies(np.zeros((0, 2), dtype=np.float32),
-               np.zeros((0, 2), dtype=np.float32),
-               np.zeros(0, dtype=np.float32),
-               np.zeros(0, dtype=np.float32),
-               np.zeros(0, dtype=np.float32),
-               np.zeros(0, dtype=np.float32)),
+        Bodies(x=np.stack((ship_0, ship_1), axis=0),
+               dx=np.zeros((2, 2), dtype=np.float32),
+               b=(2 * np.pi * random.rand(2).astype(np.float32)),
+               ttl=None),
+        Bodies(x=np.stack((planet_0, planet_1), axis=0),
+               dx=np.stack((planet_0_dx, planet_1_dx), axis=0),
+               b=None,
+               ttl=None),
+        Bodies(x=np.zeros((0, 2), dtype=np.float32),
+               dx=np.zeros((0, 2), dtype=np.float32),
+               b=None,
+               ttl=np.zeros(0, dtype=np.float32)),
     )
 
 
-def _gravity(planets, x, gravity):
+def _gravity(planets, x, config):
     rx = planets.x[np.newaxis, :, :] - x[:, np.newaxis, :]
-    f_rx = (gravity * planets.mass[np.newaxis, :] /
+    f_rx = (config.gravity * config.planet_mass /
             np.maximum(1e-12, (rx ** 2).sum(axis=2)))
     return (f_rx[:, :, np.newaxis] * rx).sum(axis=1)
 
 
 def _update_bodies(bodies, a, db, dt):
+    # the approximation (dx + dx') / 2 for updating position seems to lead
+    # to instability, so just using dx' here
     dx = bodies.dx + a * dt
     return Bodies(
         x=bodies.x + dt * dx,
         dx=dx,
-        b=bodies.b + db,
-        mass=bodies.mass,
-        radius=bodies.radius,
-        ttl=bodies.ttl - dt)
+        b=None if bodies.b is None else bodies.b + db,
+        ttl=None if bodies.ttl is None else bodies.ttl - dt)
 
 
 def step(state, control, config):
@@ -140,11 +131,10 @@ def step(state, control, config):
     returns -- (astro.State or None, array([2; float])) -- next state and
                reward for each ship
     '''
-    ships_a = (config.dt * config.ship_thrust *
+    ships_a = (config.ship_thrust *
                (control % 2)[:, np.newaxis] *
                _direction(state.ships.b) +
-               _gravity(state.planets, state.ships.x,
-                        gravity=config.gravity))
+               _gravity(state.planets, state.ships.x, config=config))
 
     ships_db = config.dt * config.ship_rspeed * ((control // 2) - 1)
 
@@ -156,7 +146,7 @@ def step(state, control, config):
             dt=config.dt),
         planets=_update_bodies(
             state.planets,
-            a=_gravity(state.planets, state.planets.x, gravity=config.gravity),
+            a=_gravity(state.planets, state.planets.x, config=config),
             db=0,
             dt=config.dt),
         bullets=_update_bodies(
@@ -179,16 +169,27 @@ def test_direction():
          [-1, 0]], atol=1e-7)
 
 
-def test_create_default():
-    def _check_shape(bodies, n):
-        assert bodies.x.shape == (n, 2)
-        assert bodies.dx.shape == (n, 2)
+def _check_shape(bodies, n, no_b=False, no_ttl=False):
+    assert bodies.x.shape == (n, 2)
+    assert bodies.dx.shape == (n, 2)
+    if no_b:
+        assert bodies.b is None
+    else:
         assert bodies.b.shape == (n,)
-        assert bodies.mass.shape == (n,)
-        assert bodies.radius.shape == (n,)
+    if no_ttl:
+        assert bodies.ttl is None
+    else:
         assert bodies.ttl.shape == (n,)
 
-    c = create(DEFAULT_CONFIG, 100)
-    _check_shape(c.ships, 2)
-    _check_shape(c.planets, 2)
-    _check_shape(c.bullets, 0)
+
+def _check_state(state):
+    _check_shape(state.ships, 2, no_ttl=True)
+    _check_shape(state.planets, 2, no_b=True, no_ttl=True)
+    _check_shape(state.bullets, 0, no_b=True)
+
+
+def test_create_step():
+    state = create(DEFAULT_CONFIG, 100)
+    _check_state(state)
+    state = step(state, np.array([2, 2]), DEFAULT_CONFIG)
+    _check_state(state)
