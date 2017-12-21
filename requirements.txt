@@ -2,4 +2,6 @@ chainer
 flake8
 jupyter
 numpy
+pandas
 pytest
+seaborn
