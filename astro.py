@@ -101,15 +101,48 @@ def _gravity(planets, x, config):
     return (f_rx[:, :, np.newaxis] * rx).sum(axis=1)
 
 
+def _wrap_unit_square(x):
+    '''Wraps x around the unit square.
+    '''
+    return ((x + 1) % 2) - 1
+
+
 def _update_bodies(bodies, a, db, dt):
+    '''Compute the movement update for 'bodies'.
+
+    bodies -- astro.Bodies -- to update
+
+    a -- array(N x 2) -- acceleration
+
+    db -- array(N) -- change in bearing
+
+    dt -- float -- timestep
+
+    returns -- astro.Bodies
+    '''
     # the approximation (dx + dx') / 2 for updating position seems to lead
     # to instability, so just using dx' here
     dx = bodies.dx + a * dt
     return Bodies(
-        x=bodies.x + dt * dx,
+        x=_wrap_unit_square(bodies.x + dt * dx),
         dx=dx,
         b=None if bodies.b is None else bodies.b + db,
         ttl=None if bodies.ttl is None else bodies.ttl - dt)
+
+
+def _collisions(x, r):
+    '''Compute a collision mask between the objects at positions 'xs', with
+    radiuses 'rs'.
+
+    x -- array(N x 2) -- positions
+
+    r -- array(N) -- radiuses
+
+    returns -- array(N; bool) -- collisions
+    '''
+    rx2 = ((x[np.newaxis, :, :] - x[:, np.newaxis, :]) ** 2).sum(axis=2)
+    r2 = (r[np.newaxis, :] + r[:, np.newaxis]) ** 2
+    return ((rx2 < r2) & ~np.eye(x.shape[0], dtype=np.bool)).any(axis=1)
 
 
 def step(state, control, config):
@@ -138,7 +171,23 @@ def step(state, control, config):
 
     ships_db = config.dt * config.ship_rspeed * ((control // 2) - 1)
 
-    return State(
+    nships = state.ships.x.shape[0]
+    nplanets = state.planets.x.shape[0]
+    collisions = _collisions(
+        np.concatenate((
+            state.ships.x,
+            state.planets.x,
+            state.bullets.x), axis=0),
+        np.concatenate((
+            np.repeat(config.ship_radius, nships),
+            np.repeat(config.planet_radius, nplanets),
+            np.zeros(state.bullets.x.shape[0])), axis=0))
+
+    if collisions[:nships].any():
+        # End of game - return reward & terminating state
+        return None, (1 - 2 * collisions[:nships])
+
+    next_state = State(
         ships=_update_bodies(
             state.ships,
             a=ships_a,
@@ -155,6 +204,7 @@ def step(state, control, config):
             db=0,
             dt=config.dt),
     )
+    return next_state, np.zeros(nships, dtype=np.float32)
 
 
 # Tests
@@ -167,6 +217,32 @@ def test_direction():
          [1, 0],
          [0, -1],
          [-1, 0]], atol=1e-7)
+
+
+def test_wrap_unit_square():
+    np.testing.assert_allclose(
+        _wrap_unit_square(np.array([
+            [1.01, -0.95],
+            [0.95, -1.01],
+        ])),
+        np.array([
+            [-0.99, -0.95],
+            [0.95, 0.99]
+        ]))
+
+
+def test_collisions():
+    np.testing.assert_equal(_collisions(np.array(
+        [[0, 0],
+         [1.9, 1.9],
+         [3.8, 1.9],
+         [3.8, 0.0]]
+    ), np.array([1, 1, 2, 0])), [
+        False,
+        True,
+        True,
+        True,
+    ])
 
 
 def _check_shape(bodies, n, no_b=False, no_ttl=False):
@@ -191,5 +267,6 @@ def _check_state(state):
 def test_create_step():
     state = create(DEFAULT_CONFIG, 100)
     _check_state(state)
-    state = step(state, np.array([2, 2]), DEFAULT_CONFIG)
+    state, reward = step(state, np.array([2, 2]), DEFAULT_CONFIG)
     _check_state(state)
+    np.testing.assert_allclose(reward, 0)
