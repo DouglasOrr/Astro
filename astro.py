@@ -33,12 +33,12 @@ Config = collections.namedtuple(
 
 DEFAULT_CONFIG = Config(
     gravity=0.8,
-    dt=0.1,
+    dt=0.02,
     bullet_spawn=0.5,
     bullet_ttl=1.0,
     bullet_speed=1,
-    ship_thrust=0.5,
-    ship_rspeed=2.0,
+    ship_thrust=2.5,
+    ship_rspeed=10.0,
     ship_position=np.array([0.9, 0.9], dtype=np.float32),
     ship_radius=0.01,
     planet_orbit=0.5,
@@ -53,6 +53,46 @@ def _direction(bearing):
     return np.stack((np.sin(bearing, dtype=np.float32),
                      np.cos(bearing, dtype=np.float32)),
                     axis=-1)
+
+
+def _bearing(x):
+    '''Return the bearing of the vector x.
+
+    x -- array(... x 2) -- direction vectors
+
+    returns -- array(...) -- bearings from +y
+    '''
+    return np.arctan2(x[..., 0], x[..., 1])
+
+
+def _mag(x):
+    '''Compute the magnitude of x along the last dimension.
+
+    x -- array(... x 2)
+
+    returns -- array(...)
+    '''
+    return np.sqrt((x ** 2).sum(axis=-1))
+
+
+def _norm(x):
+    '''Normalize x along the last dimension.
+
+    x -- array(... x 2)
+
+    returns -- array(... x 2)
+    '''
+    return x / _mag(x)
+
+
+def _norm_angle(b):
+    '''Normalize an angle (/bearing) to the range [-pi, +pi].
+
+    b -- float -- bearing
+
+    returns -- float
+    '''
+    return ((b + np.pi) % (2 * np.pi)) - np.pi
 
 
 def create(config, seed):
@@ -95,6 +135,17 @@ def create(config, seed):
 
 
 def _gravity(planets, x, config):
+    '''Compute the acceleration due to gravity of 'planets' on objects at position
+    'x'.
+
+    planets -- astro.Bodies -- only massive bodies
+
+    x -- array(N x 2) -- positions to evaluate gravitational field
+
+    config -- astro.Config -- constants
+
+    returns -- array(N x 2) -- gravitational field (force per unit mass)
+    '''
     rx = planets.x[np.newaxis, :, :] - x[:, np.newaxis, :]
     f_rx = (config.gravity * config.planet_mass /
             np.maximum(1e-12, (rx ** 2).sum(axis=2)))
@@ -207,6 +258,52 @@ def step(state, control, config):
     return next_state, np.zeros(nships, dtype=np.float32)
 
 
+def swap_ships(state):
+    '''Swap the two ships in "state", so that bots can play against each other.
+    '''
+    s = state.ships
+    return State(
+        ships=Bodies(x=s.x[::-1], dx=s.dx[::-1], b=s.b[::-1], ttl=None),
+        planets=state.planets,
+        bullets=state.bullets)
+
+
+class SurvivalBot:
+    DEFAULT_ARGS = dict(
+        max_speed=0.5,
+        angle_threshold=0.1,
+    )
+
+    def __init__(self, args):
+        self.args = args
+
+    def __call__(self, state):
+        '''A simple "staying alive" scripted bot, which tries not to crash
+        into the planets
+
+        state -- astro.State
+
+        returns -- int -- control
+        '''
+        speed = _mag(state.ships.dx[0])
+        if self.args['max_speed'] < speed:
+            # slow down!
+            target_b = _bearing(-state.ships.dx[0])
+        else:
+            # avoid the planet
+            planets = state.ships.x[0][np.newaxis, :] - state.planets.x
+            target_b = _bearing(planets[np.argmin((planets ** 2).sum(axis=1))])
+        angle = _norm_angle(target_b - state.ships.b[0])
+        if angle < -self.args['angle_threshold']:
+            return 0  # rotate left
+        elif self.args['angle_threshold'] < angle:
+            return 4  # rotate right
+        elif np.dot(state.ships.dx[0], _direction(state.ships.b[0])) < 0:
+            return 3  # forward
+        else:
+            return 2  # nothing
+
+
 # Tests
 
 def test_direction():
@@ -217,6 +314,24 @@ def test_direction():
          [1, 0],
          [0, -1],
          [-1, 0]], atol=1e-7)
+
+
+def test_bearing():
+    np.testing.assert_allclose(_bearing(np.array([0, 1])), 0, atol=1e-7)
+    np.testing.assert_allclose(
+        _bearing(np.array([
+            [0, 1],
+            [1, 0],
+            [0, -1],
+            [-1, 0]])),
+        [0, np.pi / 2, np.pi, -np.pi / 2])
+
+
+def test_mag_norm_angle():
+    np.testing.assert_allclose(_mag(np.array([3, 4])), 5)
+    np.testing.assert_allclose(_norm(np.array([3, 4])), [0.6, 0.8])
+    np.testing.assert_allclose(_norm_angle(2 * np.pi + 0.5), 0.5)
+    np.testing.assert_allclose(_norm_angle(-4 * np.pi - 0.5), -0.5)
 
 
 def test_wrap_unit_square():
