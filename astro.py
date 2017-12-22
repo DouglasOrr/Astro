@@ -65,19 +65,19 @@ def _from_json(obj):
 
 DEFAULT_CONFIG = Config(
     seed=42,
-    gravity=0.8,
+    gravity=0.1,
     dt=0.02,
-    max_time=10,
+    max_time=60,
     bullet_spawn=0.5,
     bullet_ttl=1.0,
-    bullet_speed=1,
-    ship_thrust=2.5,
-    ship_rspeed=10.0,
+    bullet_speed=1.0,
+    ship_thrust=1.0,
+    ship_rspeed=3.0,
     ship_position=np.array([0.9, 0.9], dtype=np.float32),
-    ship_radius=0.01,
+    ship_radius=0.02,
     planet_orbit=0.5,
     planet_mass=1.0,
-    planet_radius=0.1,
+    planet_radius=0.2,
 )
 
 
@@ -317,7 +317,7 @@ class SurvivalBot:
     '''
     DEFAULT_ARGS = dict(
         max_speed=0.5,
-        angle_threshold=0.1,
+        angle_threshold=0.5,
     )
 
     def __init__(self, args):

@@ -5,6 +5,7 @@ import string
 import subprocess
 
 IMAGE = 'astro'
+SERVER = 'astro-server'
 NOTEBOOK = 'astro-notebook'
 # >>> IPython.lib.passwd("astro")
 NOTEBOOK_PASSWORD = \
@@ -22,6 +23,19 @@ def sh(cmd, **args):
 def build():
     sh('docker build --rm -t ${IMAGE} .',
        IMAGE=IMAGE)
+    sh('mkdir -p static/lib')
+    sh('wget -qO ${DEST} ${SRC}',
+       DEST='static/lib/jquery.js',
+       SRC='https://code.jquery.com/jquery-3.2.1.min.js')
+    sh('wget -qO ${DEST} ${SRC}',
+       DEST='static/lib/bootstrap.css',
+       SRC='https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.2/css/bootstrap.min.css')  # NOQA
+    sh('wget -qO ${DEST} ${SRC}',
+       DEST='static/lib/popper.js',
+       SRC='https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.3/umd/popper.min.js')  # NOQA
+    sh('wget -qO ${DEST} ${SRC}',
+       DEST='static/lib/bootstrap.js',
+       SRC='https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.2/js/bootstrap.min.js')  # NOQA
 
 
 def run(command):
@@ -34,6 +48,18 @@ def run(command):
 def test():
     run(['pytest astro.py'])
     run(['flake8'])
+
+
+def server(detach):
+    if detach:
+        sh('docker rm -f ${SERVER} || true',
+           SERVER=SERVER)
+    sh('docker run ${DOCKER_ARGS} -v `pwd`:/work -w /work -p ${PORT}:${PORT}'
+       ' ${IMAGE} env FLASK_APP=server.py FLASK_DEBUG=1'
+       ' flask run --host=0.0.0.0 --port ${PORT}',
+       IMAGE=IMAGE,
+       DOCKER_ARGS='-d --name ' + SERVER if detach else '--rm -it',
+       PORT=5000)
 
 
 def notebook():
@@ -64,6 +90,10 @@ p.set_defaults(action=run)
 subs.add_parser('test').set_defaults(action=test)
 
 subs.add_parser('notebook').set_defaults(action=notebook)
+
+p = subs.add_parser('server')
+p.add_argument('-d', '--detach', action='store_true')
+p.set_defaults(action=server)
 
 args = vars(parser.parse_args())
 action = args.pop('action')
