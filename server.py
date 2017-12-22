@@ -3,6 +3,7 @@ import astro
 import uuid
 import lru
 import numpy as np
+import random
 app = flask.Flask(__name__)
 
 BOTS = dict(
@@ -30,7 +31,7 @@ def bots():
 
 @app.route('/game/start', methods=['POST'])
 def game_start():
-    config = astro.DEFAULT_CONFIG
+    config = astro.DEFAULT_CONFIG._replace(seed=random.randint(0, 1 << 30))
     bot = flask.request.args['bot']
     game = dict(
         id=str(uuid.uuid4()),
