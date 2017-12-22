@@ -343,6 +343,13 @@ class SurvivalBot:
             return 2  # nothing
 
 
+class NothingBot:
+    '''Doesn't do anything!
+    '''
+    def __call__(self, state):
+        return 2
+
+
 def save_log(path, config, states):
     '''Saves a game log as jsonlines.
     '''

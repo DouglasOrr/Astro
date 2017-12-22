@@ -2,6 +2,7 @@ chainer
 flake8
 flask
 jupyter
+lru-dict
 numpy
 pandas
 pytest

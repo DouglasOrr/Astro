@@ -46,7 +46,7 @@ def run(command):
 
 
 def test():
-    run(['pytest astro.py'])
+    run(['pytest *.py'])
     run(['flake8'])
 
 

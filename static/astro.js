@@ -81,7 +81,7 @@ function _load_json(obj) {
     }
 }
 
-var player = (new function() {
+var replay_player = (new function() {
     this._interval = null,
     this.play = function (config, states) {
         window.clearInterval(this._interval);
@@ -102,11 +102,63 @@ function _select_replay(e) {
             var lines = e.target.result.trim().split('\n');
             var config = _load_json(JSON.parse(lines.shift()));
             var states = lines.map(x => _load_json(JSON.parse(x)));
-            player.play(config, states);
+            replay_player.play(config, states);
         };
         reader.readAsText(e.target.files[0]);
         $(e.target).hide();
     }
+}
+
+var controller = (new function() {
+    this.control = 2,
+    this._up = false,
+    this._down = false,
+    this._left = false,
+    this._right = false,
+    this.keyevent = function (e) {
+        if (e.key == 'ArrowUp') { e.data._up = (e.type == 'keydown'); }
+        if (e.key == 'ArrowDown') { e.data._down = (e.type == 'keydown'); }
+        if (e.key == 'ArrowLeft') { e.data._left = (e.type == 'keydown'); }
+        if (e.key == 'ArrowRight') { e.data._right = (e.type == 'keydown'); }
+        e.data.control = 2 * (1 + e.data._right - e.data._left) + (e.data._up && !e.data._down);
+    }
+}());
+
+var player = (new function() {
+    this._timeout = null,
+    this.play = function (id, config, state) {
+        window.clearTimeout(this._timeout);
+        _render(config, state);
+        function tick() {
+            var query = '/game/tick?' + $.param({"id": id, "control": controller.control});
+            $.post(query, null, function (data) {
+                if (data.state === null) {
+                    var reward = _load_json(data.reward);
+                    var outcome = $('<div class="alert display-1">');
+                    if (reward[0] < reward[1]) {
+                        outcome.addClass('alert-danger').append('You lose 😢');
+                    } else if (reward[1] < reward[0]) {
+                        outcome.addClass('alert-success').append('You win ☺️');
+                    } else {
+                        outcome.addClass('alert-warning').append("It's a draw 😐");
+                    }
+                    $('.game-outcome').empty().append(outcome);
+                } else {
+                    _render(config, _load_json(data.state));
+                    this._timeout = window.setTimeout(tick, config.dt * 1000);
+                }
+            });
+        }
+        this._timeout = window.setTimeout(tick, config.dt * 1000);
+    }
+}());
+
+function _start_game(e) {
+    var query = '/game/start?' + $.param({"bot": $(e.target).data('bot')})
+    $.post(query, null, function (data) {
+        $('.bot-selector').hide();
+        player.play(data.id, _load_json(data.config), _load_json(data.state));
+    });
 }
 
 function _resize_canvas() {
@@ -121,5 +173,25 @@ function _resize_canvas() {
 $(function() {
     _resize_canvas();
     $(window).resize(_resize_canvas);
+
+    // Replayer only
     $('.replay-file').change(_select_replay);
+
+    // Player only
+    if ($('.bot-selector').length) {
+        // $(window).keydown(controller.keyevent);
+        // $(window).keyup(controller.keyevent);
+        $(window).on('keyup keydown', null, controller, controller.keyevent);
+        $.get('/bots', {}, function (data) {
+            $('.bot-selector')
+                .empty()
+                .append('<span class="lead">Choose an opponent...</span>')
+                .append(data.bots.map(
+                    x => $('<button class="btn btn-lg btn-outline-primary">')
+                        .append(x)
+                        .data('bot', x)
+                        .click(_start_game)
+                ));
+        });
+    }
 });
