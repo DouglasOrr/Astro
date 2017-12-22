@@ -2,8 +2,10 @@
 learning.
 '''
 
-import collections
 import numpy as np
+import collections
+import json
+import importlib
 
 
 Bodies = collections.namedtuple(
@@ -12,12 +14,14 @@ Bodies = collections.namedtuple(
 
 State = collections.namedtuple(
     'State',
-    ('ships', 'planets', 'bullets'))
+    ('ships', 'planets', 'bullets', 't'))
 
 Config = collections.namedtuple(
     'Config', (
+        'seed',
         'gravity',
         'dt',
+        'max_time',
         'bullet_spawn',
         'bullet_ttl',
         'bullet_speed',
@@ -31,9 +35,39 @@ Config = collections.namedtuple(
     ))
 
 
+def _to_json(obj):
+    if hasattr(obj, '_asdict'):
+        d = {k: _to_json(v)
+             for k, v in obj._asdict().items()}
+        _type = type(obj)
+        d['_type'] = '{}:{}'.format(_type.__module__, _type.__name__)
+        return d
+    elif isinstance(obj, np.ndarray):
+        return {'_values': obj.tolist(),
+                '_shape': obj.shape}
+    else:
+        return obj
+
+
+def _from_json(obj):
+    if isinstance(obj, dict):
+        if obj.keys() == {'_values', '_shape'}:
+            a = np.array(obj['_values']).reshape(obj['_shape'])
+            return a.astype(np.float32) if a.dtype is np.float64 else a
+        _module, _name = obj.pop('_type').split(':')
+        return getattr(
+            importlib.import_module(_module),
+            _name
+        )(**{k: _from_json(v) for k, v in obj.items()})
+    else:
+        return obj
+
+
 DEFAULT_CONFIG = Config(
+    seed=42,
     gravity=0.8,
     dt=0.02,
+    max_time=10,
     bullet_spawn=0.5,
     bullet_ttl=1.0,
     bullet_speed=1,
@@ -95,15 +129,13 @@ def _norm_angle(b):
     return ((b + np.pi) % (2 * np.pi)) - np.pi
 
 
-def create(config, seed):
+def create(config):
     '''Create a new game state randomly.
 
     Currently only supports the "binary stars" map - two equal mass & size
     stars in orbit of one another.
-
-    seed -- int -- random seed
     '''
-    random = np.random.RandomState(seed)
+    random = np.random.RandomState(config.seed)
 
     # ships
     ship_0 = (config.ship_position *
@@ -119,18 +151,19 @@ def create(config, seed):
     planet_1_dx = -planet_0_dx
 
     return State(
-        Bodies(x=np.stack((ship_0, ship_1), axis=0),
-               dx=np.zeros((2, 2), dtype=np.float32),
-               b=(2 * np.pi * random.rand(2).astype(np.float32)),
-               ttl=None),
-        Bodies(x=np.stack((planet_0, planet_1), axis=0),
-               dx=np.stack((planet_0_dx, planet_1_dx), axis=0),
-               b=None,
-               ttl=None),
-        Bodies(x=np.zeros((0, 2), dtype=np.float32),
-               dx=np.zeros((0, 2), dtype=np.float32),
-               b=None,
-               ttl=np.zeros(0, dtype=np.float32)),
+        ships=Bodies(x=np.stack((ship_0, ship_1), axis=0),
+                     dx=np.zeros((2, 2), dtype=np.float32),
+                     b=(2 * np.pi * random.rand(2).astype(np.float32)),
+                     ttl=None),
+        planets=Bodies(x=np.stack((planet_0, planet_1), axis=0),
+                       dx=np.stack((planet_0_dx, planet_1_dx), axis=0),
+                       b=None,
+                       ttl=None),
+        bullets=Bodies(x=np.zeros((0, 2), dtype=np.float32),
+                       dx=np.zeros((0, 2), dtype=np.float32),
+                       b=None,
+                       ttl=np.zeros(0, dtype=np.float32)),
+        t=0.0,
     )
 
 
@@ -235,8 +268,12 @@ def step(state, control, config):
             np.zeros(state.bullets.x.shape[0])), axis=0))
 
     if collisions[:nships].any():
-        # End of game - return reward & terminating state
+        # End of game (collision)
         return None, (1 - 2 * collisions[:nships])
+
+    if config.max_time <= state.t + config.dt:
+        # End of game (timeout) - return reward & terminating state
+        return None, np.zeros(nships, dtype=np.float32)
 
     next_state = State(
         ships=_update_bodies(
@@ -254,6 +291,7 @@ def step(state, control, config):
             a=0,
             db=0,
             dt=config.dt),
+        t=state.t + config.dt,
     )
     return next_state, np.zeros(nships, dtype=np.float32)
 
@@ -265,10 +303,18 @@ def swap_ships(state):
     return State(
         ships=Bodies(x=s.x[::-1], dx=s.dx[::-1], b=s.b[::-1], ttl=None),
         planets=state.planets,
-        bullets=state.bullets)
+        bullets=state.bullets,
+        t=state.t)
 
 
 class SurvivalBot:
+    '''A simple "staying alive" scripted bot, which tries not to crash
+    into the planets
+
+    state -- astro.State
+
+    returns -- int -- control
+    '''
     DEFAULT_ARGS = dict(
         max_speed=0.5,
         angle_threshold=0.1,
@@ -278,13 +324,6 @@ class SurvivalBot:
         self.args = args
 
     def __call__(self, state):
-        '''A simple "staying alive" scripted bot, which tries not to crash
-        into the planets
-
-        state -- astro.State
-
-        returns -- int -- control
-        '''
         speed = _mag(state.ships.dx[0])
         if self.args['max_speed'] < speed:
             # slow down!
@@ -302,6 +341,28 @@ class SurvivalBot:
             return 3  # forward
         else:
             return 2  # nothing
+
+
+def save_log(path, config, states):
+    '''Saves a game log as jsonlines.
+    '''
+    with open(path, 'w') as f:
+        f.write(json.dumps(_to_json(config)) + '\n')
+        for state in states:
+            f.write(json.dumps(_to_json(state)) + '\n')
+
+
+def load_log(path):
+    '''Load a game log from file.
+
+    path -- string -- file path
+
+    returns -- (astro.Config, [astro.State])
+    '''
+    with open(path, 'r') as f:
+        config = _from_json(json.loads(next(f)))
+        states = [_from_json(json.loads(line)) for line in f]
+        return config, states
 
 
 # Tests
@@ -379,9 +440,19 @@ def _check_state(state):
     _check_shape(state.bullets, 0, no_b=True)
 
 
-def test_create_step():
-    state = create(DEFAULT_CONFIG, 100)
-    _check_state(state)
-    state, reward = step(state, np.array([2, 2]), DEFAULT_CONFIG)
-    _check_state(state)
+def test_create_step_swap_roundtrip():
+    state_0 = create(DEFAULT_CONFIG)
+    _check_state(state_0)
+
+    state_1, reward = step(state_0, np.array([2, 2]), DEFAULT_CONFIG)
+    _check_state(state_1)
     np.testing.assert_allclose(reward, 0)
+
+    _check_state(swap_ships(state_1))
+
+    # roundtrip via file
+    save_log('/tmp/astro.test.log', DEFAULT_CONFIG, [state_0, state_1])
+    re_config, re_states = load_log('/tmp/astro.test.log')
+    np.testing.assert_equal(re_config, DEFAULT_CONFIG)
+    assert len(re_states) == 2
+    np.testing.assert_equal(re_states, [state_0, state_1])
