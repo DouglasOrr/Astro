@@ -55,9 +55,10 @@ def server(detach):
         sh('docker rm -f ${SERVER} || true',
            SERVER=SERVER)
     sh('docker run ${DOCKER_ARGS} -v `pwd`:/work -w /work -p ${PORT}:${PORT}'
-       ' ${IMAGE} env FLASK_APP=server.py FLASK_DEBUG=1'
+       ' ${IMAGE} env FLASK_APP=server.py ${DEBUG}'
        ' flask run --host=0.0.0.0 --port ${PORT}',
        IMAGE=IMAGE,
+       DEBUG='FLASK_DEBUG=0' if detach else 'FLASK_DEBUG=1',
        DOCKER_ARGS='-d --name ' + SERVER if detach else '--rm -it',
        PORT=5000)
 

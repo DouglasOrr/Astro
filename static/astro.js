@@ -35,6 +35,23 @@ function _draw_ships(ctx, config, ships) {
     }
 }
 
+function _draw_bullets(ctx, config, bullets) {
+    var size = 0.01;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = size / 4;
+    for (var i = 0; i < bullets.x.length; ++i) {
+        var p = bullets.x[i];
+        var a = bullets.b[i];
+        var ax = 0.5 * size * Math.sin(a);
+        var ay = 0.5 * size * Math.cos(a);
+        ctx.beginPath();
+        ctx.moveTo(p[0] - ax, p[1] - ay);
+        ctx.lineTo(p[0] + ax, p[1] + ay);
+        ctx.stroke();
+    }
+}
+
+
 function _render(config, state) {
     var canvas = $('.main-canvas')[0];
     var ctx = canvas.getContext('2d');
@@ -57,6 +74,7 @@ function _render(config, state) {
 
     _draw_planets(ctx, config, state.planets);
     _draw_ships(ctx, config, state.ships);
+    _draw_bullets(ctx, config, state.bullets);
 }
 
 // -------------------- Control & utility --------------------

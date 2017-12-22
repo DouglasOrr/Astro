@@ -10,11 +10,12 @@ import importlib
 
 Bodies = collections.namedtuple(
     'Bodies',
-    ('x', 'dx', 'b', 'ttl'))
+    ('x', 'dx', 'b'))
 
 State = collections.namedtuple(
     'State',
-    ('ships', 'planets', 'bullets', 't'))
+    ('ships', 'planets', 'bullets',
+     'reload', 't'))
 
 Config = collections.namedtuple(
     'Config', (
@@ -22,8 +23,7 @@ Config = collections.namedtuple(
         'gravity',
         'dt',
         'max_time',
-        'bullet_spawn',
-        'bullet_ttl',
+        'reload_time',
         'bullet_speed',
         'ship_thrust',
         'ship_rspeed',
@@ -68,9 +68,8 @@ DEFAULT_CONFIG = Config(
     gravity=0.1,
     dt=0.02,
     max_time=60,
-    bullet_spawn=0.5,
-    bullet_ttl=1.0,
-    bullet_speed=1.0,
+    reload_time=0.2,
+    bullet_speed=2.0,
     ship_thrust=1.0,
     ship_rspeed=3.0,
     ship_position=np.array([0.9, 0.9], dtype=np.float32),
@@ -153,16 +152,14 @@ def create(config):
     return State(
         ships=Bodies(x=np.stack((ship_0, ship_1), axis=0),
                      dx=np.zeros((2, 2), dtype=np.float32),
-                     b=(2 * np.pi * random.rand(2).astype(np.float32)),
-                     ttl=None),
+                     b=(2 * np.pi * random.rand(2).astype(np.float32))),
         planets=Bodies(x=np.stack((planet_0, planet_1), axis=0),
                        dx=np.stack((planet_0_dx, planet_1_dx), axis=0),
-                       b=None,
-                       ttl=None),
+                       b=None),
         bullets=Bodies(x=np.zeros((0, 2), dtype=np.float32),
                        dx=np.zeros((0, 2), dtype=np.float32),
-                       b=None,
-                       ttl=np.zeros(0, dtype=np.float32)),
+                       b=np.zeros((0,), dtype=np.float32)),
+        reload=0.0,
         t=0.0,
     )
 
@@ -191,7 +188,22 @@ def _wrap_unit_square(x):
     return ((x + 1) % 2) - 1
 
 
-def _update_bodies(bodies, a, db, dt):
+def _mask(bodies, mask):
+    '''Only select bodies for which mask is true.
+
+    bodies -- astro.Bodies
+
+    mask -- np.array(N; bool) -- selects bodies to keep
+
+    returns -- astro.Bodies
+    '''
+    return Bodies(
+        x=bodies.x[mask],
+        dx=bodies.dx[mask],
+        b=bodies.b[mask])
+
+
+def _update_bodies(bodies, a, db, dt, cull_on_exit):
     '''Compute the movement update for 'bodies'.
 
     bodies -- astro.Bodies -- to update
@@ -202,16 +214,22 @@ def _update_bodies(bodies, a, db, dt):
 
     dt -- float -- timestep
 
+    cull_on_exit -- bool -- if True, remove out-of-bounds bodies rather than
+                    wrapping
+
     returns -- astro.Bodies
     '''
     # the approximation (dx + dx') / 2 for updating position seems to lead
     # to instability, so just using dx' here
     dx = bodies.dx + a * dt
-    return Bodies(
-        x=_wrap_unit_square(bodies.x + dt * dx),
-        dx=dx,
-        b=None if bodies.b is None else bodies.b + db,
-        ttl=None if bodies.ttl is None else bodies.ttl - dt)
+    x = bodies.x + dt * dx
+    b = None if bodies.b is None else bodies.b + db
+    if cull_on_exit:
+        return _mask(
+            Bodies(x=x, dx=dx, b=b),
+            mask=(([-1, -1] <= x) & (x <= [1, 1])).any(axis=1))
+    else:
+        return Bodies(x=_wrap_unit_square(x), dx=dx, b=b)
 
 
 def _collisions(x, r):
@@ -275,22 +293,49 @@ def step(state, control, config):
         # End of game (timeout) - return reward & terminating state
         return None, np.zeros(nships, dtype=np.float32)
 
+    next_reload = state.reload + config.dt
+    next_bullets = _mask(
+        state.bullets,
+        ~collisions[(nships + nplanets):])
+    if config.reload_time <= next_reload:
+        ships = state.ships
+        ships_direction = _direction(ships.b)
+        next_bullets = Bodies(
+            x=np.concatenate([
+                next_bullets.x,
+                ships.x + 1.001 * config.ship_radius * ships_direction
+            ], axis=0),
+            dx=np.concatenate([
+                next_bullets.dx,
+                ships.dx + config.bullet_speed * ships_direction
+            ], axis=0),
+            b=np.concatenate([
+                next_bullets.b,
+                ships.b,
+            ], axis=0),
+        )
+        next_reload -= config.reload_time
+
     next_state = State(
         ships=_update_bodies(
             state.ships,
             a=ships_a,
             db=ships_db,
-            dt=config.dt),
+            dt=config.dt,
+            cull_on_exit=False),
         planets=_update_bodies(
             state.planets,
             a=_gravity(state.planets, state.planets.x, config=config),
             db=0,
-            dt=config.dt),
+            dt=config.dt,
+            cull_on_exit=False),
         bullets=_update_bodies(
-            state.bullets,
+            next_bullets,
             a=0,
             db=0,
-            dt=config.dt),
+            dt=config.dt,
+            cull_on_exit=True),
+        reload=next_reload,
         t=state.t + config.dt,
     )
     return next_state, np.zeros(nships, dtype=np.float32)
@@ -301,9 +346,10 @@ def swap_ships(state):
     '''
     s = state.ships
     return State(
-        ships=Bodies(x=s.x[::-1], dx=s.dx[::-1], b=s.b[::-1], ttl=None),
+        ships=Bodies(x=s.x[::-1], dx=s.dx[::-1], b=s.b[::-1]),
         planets=state.planets,
         bullets=state.bullets,
+        reload=state.reload,
         t=state.t)
 
 
@@ -428,23 +474,19 @@ def test_collisions():
     ])
 
 
-def _check_shape(bodies, n, no_b=False, no_ttl=False):
+def _check_shape(bodies, n, no_b=False):
     assert bodies.x.shape == (n, 2)
     assert bodies.dx.shape == (n, 2)
     if no_b:
         assert bodies.b is None
     else:
         assert bodies.b.shape == (n,)
-    if no_ttl:
-        assert bodies.ttl is None
-    else:
-        assert bodies.ttl.shape == (n,)
 
 
 def _check_state(state):
-    _check_shape(state.ships, 2, no_ttl=True)
-    _check_shape(state.planets, 2, no_b=True, no_ttl=True)
-    _check_shape(state.bullets, 0, no_b=True)
+    _check_shape(state.ships, 2)
+    _check_shape(state.planets, 2, no_b=True)
+    _check_shape(state.bullets, 0)
 
 
 def test_create_step_swap_roundtrip():
