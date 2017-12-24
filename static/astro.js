@@ -144,12 +144,18 @@ var controller = (new function() {
 
 var player = (new function() {
     this._timeout = null,
+    this._current_game = null,
     this.play = function (id, config, state) {
         window.clearTimeout(this._timeout);
+        this._current_game = id;
         _render(config, state);
+        var self = this;
         function tick() {
             var query = '/game/tick?' + $.param({"id": id, "control": controller.control});
             $.post(query, null, function (data) {
+                if (self._current_game !== id) {
+                    return; // avoid double-play
+                }
                 if (data.state === null) {
                     var reward = _load_json(data.reward);
                     var outcome = $('<div class="alert display-1">');
@@ -163,7 +169,7 @@ var player = (new function() {
                     $('.game-outcome').empty().append(outcome);
                 } else {
                     _render(config, _load_json(data.state));
-                    this._timeout = window.setTimeout(tick, config.dt * 1000);
+                    self._timeout = window.setTimeout(tick, config.dt * 1000);
                 }
             });
         }
@@ -171,12 +177,20 @@ var player = (new function() {
     }
 }());
 
+var game = (new function() {
+    this.bot = null,
+    this.restart = function() {
+        var query = '/game/start?' + $.param({"bot": this.bot})
+        $.post(query, null, function (data) {
+            player.play(data.id, _load_json(data.config), _load_json(data.state));
+        });
+    }
+}());
+
 function _start_game(e) {
-    var query = '/game/start?' + $.param({"bot": $(e.target).data('bot')})
-    $.post(query, null, function (data) {
-        $('.bot-selector').hide();
-        player.play(data.id, _load_json(data.config), _load_json(data.state));
-    });
+    game.bot = $(e.target).data('bot');
+    game.restart();
+    $('.bot-selector').hide();
 }
 
 function _resize_canvas() {
@@ -200,6 +214,11 @@ $(function() {
         // $(window).keydown(controller.keyevent);
         // $(window).keyup(controller.keyevent);
         $(window).on('keyup keydown', null, controller, controller.keyevent);
+        $(window).keypress(function (e) {
+            if (e.key == "r") {
+                game.restart();
+            }
+        });
         $.get('/bots', {}, function (data) {
             $('.bot-selector')
                 .empty()
