@@ -7,8 +7,9 @@ import random
 app = flask.Flask(__name__)
 
 BOTS = dict(
-    nothing=astro.NothingBot(),
-    survival=astro.SurvivalBot(astro.SurvivalBot.DEFAULT_ARGS),
+    nothing=(lambda config: astro.NothingBot()),
+    script=(lambda config: astro.ScriptBot(
+        astro.ScriptBot.DEFAULT_ARGS, config)),
 )
 GAMES = lru.LRU(10)  # to stop us running out of memory
 
@@ -36,7 +37,7 @@ def game_start():
     game = dict(
         id=str(uuid.uuid4()),
         config=config,
-        bot=BOTS[bot],
+        bot=BOTS[bot](config),
         state=astro.create(config))
     GAMES[game['id']] = game
     return flask.jsonify(dict(

@@ -12,7 +12,7 @@ function _draw_planets(ctx, config, planets) {
 
 function _draw_ships(ctx, config, ships) {
     var alpha = Math.PI / 4;
-    var bigger_by = 1.2;  // inflate the radius to 'match it up'
+    var bigger_by = 1.1;  // inflate the radius to 'match it up'
     var line_width = 0.01;
     var colors = ['#fc0', '#d3f'];
 
@@ -148,6 +148,8 @@ var player = (new function() {
     this.play = function (id, config, state) {
         window.clearTimeout(this._timeout);
         this._current_game = id;
+        $('.game-outcome').empty();
+
         _render(config, state);
         var self = this;
         function tick() {

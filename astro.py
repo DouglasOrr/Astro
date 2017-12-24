@@ -65,15 +65,15 @@ def _from_json(obj):
 
 DEFAULT_CONFIG = Config(
     seed=42,
-    gravity=0.1,
+    gravity=0.05,
     dt=0.02,
     max_time=60,
     reload_time=0.2,
-    bullet_speed=2.0,
+    bullet_speed=1.5,
     ship_thrust=1.0,
-    ship_rspeed=3.0,
+    ship_rspeed=4.0,
     ship_position=np.array([0.9, 0.9], dtype=np.float32),
-    ship_radius=0.02,
+    ship_radius=0.025,
     planet_orbit=0.5,
     planet_mass=1.0,
     planet_radius=0.2,
@@ -115,7 +115,7 @@ def _norm(x):
 
     returns -- array(... x 2)
     '''
-    return x / _mag(x)
+    return x / (_mag(x) + 1e-12)
 
 
 def _norm_angle(b):
@@ -126,6 +126,16 @@ def _norm_angle(b):
     returns -- float
     '''
     return ((b + np.pi) % (2 * np.pi)) - np.pi
+
+
+def _dot(a, b):
+    '''Return the dot product between batches of vectors.
+
+    a, b -- array(... x N)
+
+    returns -- array(...)
+    '''
+    return (a * b).sum(axis=-1)
 
 
 def create(config):
@@ -353,40 +363,86 @@ def swap_ships(state):
         t=state.t)
 
 
-class SurvivalBot:
-    '''A simple "staying alive" scripted bot, which tries not to crash
-    into the planets
+class ScriptBot:
+    '''Tries to stay alive first, to shoot you second.
 
     state -- astro.State
 
     returns -- int -- control
     '''
     DEFAULT_ARGS = dict(
-        max_speed=0.5,
-        angle_threshold=0.5,
+        avoid_horizon=1.0,
+        avoid_d1=0.1,
+        avoid_d2=0.05,
+        avoid_threshold=0.3,
+        aim_threshold=0.1,
     )
 
-    def __init__(self, args):
+    def __init__(self, args, config):
         self.args = args
+        self.config = config
+
+    def _fly_to(self, state, b, t, fwd):
+        angle = _norm_angle(b - state.ships.b[0])
+        if angle < -t:
+            return 0  # rotate left
+        elif t < angle:
+            return 4  # rotate right
+        elif fwd:
+            return 3
+        else:
+            return 2
+
+    def _danger(self, x, dx, b):
+        '''Am I in danger of crashing into this planet?
+
+        x -- array(2) -- my position, relative to planet
+
+        dx -- array(2) -- my velocity, relative to planet
+
+        b -- float -- my bearing
+
+        returns -- float or None -- bearing to take action, or `None`
+                   if no action is required
+        '''
+        radius = (self.config.planet_radius + self.config.ship_radius)
+        if _mag(x) < radius + self.args['avoid_d1']:
+            return _bearing(x)
+
+        b = 2 * _dot(_norm(dx), x)
+        c = (_mag(x) ** 2 - (radius + self.args['avoid_d2']) ** 2)
+        det = b ** 2 - 4 * c
+        if 0 < det and 0 <= -b:
+            # two positive real-valued roots
+            distance = -b - np.sqrt(det)
+            rotation = abs(_norm_angle(_bearing(x) - b))
+            speed = _mag(dx)
+            if distance < (speed / self.config.ship_thrust +
+                           self.config.ship_rspeed / rotation) * speed:
+                return _bearing(x)
+        return None
 
     def __call__(self, state):
-        speed = _mag(state.ships.dx[0])
-        if self.args['max_speed'] < speed:
-            # slow down!
-            target_b = _bearing(-state.ships.dx[0])
-        else:
-            # avoid the planet
-            planets = state.ships.x[0][np.newaxis, :] - state.planets.x
-            target_b = _bearing(planets[np.argmin((planets ** 2).sum(axis=1))])
-        angle = _norm_angle(target_b - state.ships.b[0])
-        if angle < -self.args['angle_threshold']:
-            return 0  # rotate left
-        elif self.args['angle_threshold'] < angle:
-            return 4  # rotate right
-        elif np.dot(state.ships.dx[0], _direction(state.ships.b[0])) < 0:
-            return 3  # forward
-        else:
-            return 2  # nothing
+        # don't crash into planets
+        for i in range(state.planets.x.shape[0]):
+            b = self._danger(state.ships.x[0] - state.planets.x[i],
+                             state.ships.dx[0] - state.planets.dx[i],
+                             state.ships.b[0])
+            if b is not None:
+                return self._fly_to(state, b, self.args['avoid_threshold'],
+                                    fwd=True)
+
+        # aim for the enemy
+        enemy_distance = _mag(state.ships.x[1] - state.ships.x[0])
+        bullet_time = (enemy_distance / self.config.bullet_speed)
+        enemy_forecast = (state.ships.x[1] +
+                          bullet_time *
+                          (state.ships.dx[1] - state.ships.dx[0]))
+        return self._fly_to(
+            state,
+            _bearing(enemy_forecast - state.ships.x[0]),
+            self.config.ship_radius / enemy_distance,
+            fwd=False)
 
 
 class NothingBot:
