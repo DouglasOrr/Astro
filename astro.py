@@ -3,9 +3,13 @@ learning.
 '''
 
 import numpy as np
+import scipy as sp
+import scipy.stats  # NOQA
+import itertools as it
 import collections
 import json
 import importlib
+import sys
 
 
 Bodies = collections.namedtuple(
@@ -136,6 +140,20 @@ def _dot(a, b):
     returns -- array(...)
     '''
     return (a * b).sum(axis=-1)
+
+
+def _pbetter(nwins, nlosses):
+    '''Compute the probability of this being better, given the number
+    of wins & losses, under an informative beta prior.
+
+    nwins -- int -- number of wins
+
+    nlosses -- int -- number of losses
+
+    returns -- float -- probability of the underlying win rate being
+               greater than 0.5
+    '''
+    return 1 - sp.stats.beta.cdf(0.5, 1 + nwins, 1 + nlosses)
 
 
 def create(config):
@@ -303,6 +321,7 @@ def step(state, control, config):
         # End of game (timeout) - return reward & terminating state
         return None, np.zeros(nships, dtype=np.float32)
 
+    # fire bullets
     next_reload = state.reload + config.dt
     next_bullets = _mask(
         state.bullets,
@@ -363,6 +382,62 @@ def swap_ships(state):
         t=state.t)
 
 
+def play(bot_0, bot_1, config):
+    '''Play out the game between bot_0 & bot_1.
+
+    bot_0, bot_1 -- bots to play
+
+    config -- astro.Config
+
+    returns -- int or None -- 0 if bot_0 won, 1 if bot_1 won, None if a draw
+    '''
+    state = create(config)
+    while True:
+        control = np.array([bot_0(state), bot_1(swap_ships(state))])
+        state, reward = step(state, control, config)
+        if state is None:
+            if reward[1] < reward[0]:
+                return 0
+            elif reward[0] < reward[1]:
+                return 1
+            else:
+                return None
+
+
+def find_better(games, max_trials, threshold):
+    '''Find the better bot from a series of game results.
+
+    games -- iterable(int or None) -- results of play()
+
+    max_trials -- int -- trial limit before giving up
+
+    threshold -- float -- how sure must we be of the answer?
+
+    returns -- int -- 0 if the first player is better, 1 if the second player,
+                      None if inconclusive
+    '''
+    nwins0 = 0
+    nwins1 = 0
+    for n, winner in enumerate(games):
+        nwins0 += (winner == 0)
+        nwins1 += (winner == 1)
+        p0 = _pbetter(nwins=nwins0, nlosses=nwins1)
+        if threshold < p0:
+            # confident that 0 is better
+            return 0
+        elif threshold < (1 - p0):
+            # confident that 1 is better
+            return 1
+        else:
+            nremaining = max_trials - n - 1
+            if ((_pbetter(nwins=nwins0 + nremaining, nlosses=nwins1) <
+                 threshold) or
+                ((1 - _pbetter(nwins=nwins0, nlosses=nwins1 + nremaining)) <
+                 threshold)):
+                # inconclusive - not enough trials left to reach confidence
+                return None
+
+
 class ScriptBot:
     '''Tries to stay alive first, to shoot you second.
 
@@ -371,7 +446,6 @@ class ScriptBot:
     returns -- int -- control
     '''
     DEFAULT_ARGS = dict(
-        avoid_horizon=1.0,
         avoid_d1=0.1,
         avoid_d2=0.05,
         avoid_threshold=0.3,
@@ -443,6 +517,62 @@ class ScriptBot:
             _bearing(enemy_forecast - state.ships.x[0]),
             self.config.ship_radius / enemy_distance,
             fwd=False)
+
+    @staticmethod
+    def mutate(args, scale, random):
+        '''Generate a local random mutation of `args`.
+
+        args -- dict -- arguments
+
+        scale -- float -- base scale of mutation
+
+        random -- numpy.random.RandomState -- random generator
+
+        returns -- dict -- mutated arguments
+        '''
+        args = args.copy()
+        args['avoid_d1'] += scale * random.normal()
+        args['avoid_d2'] += scale * random.normal()
+        args['avoid_threshold'] += scale * random.normal()
+        args['aim_threshold'] += scale * random.normal()
+        return args
+
+    @classmethod
+    def play_many(cls, baseline_args, args, config, random):
+        '''Return an iterable of games played between two ScriptBots.
+
+        baseline_args -- dict -- args to use as a baseline
+
+        args -- dict -- args to compete
+
+        config -- astro.Config -- basic config to use
+
+        random -- numpy.random.RandomState -- generator
+
+        returns -- iterable(int or None) -- game winners
+        '''
+        while True:
+            config = config._replace(seed=random.randint(1 << 30))
+            yield play(cls(baseline_args, config), cls(args, config), config)
+
+    @classmethod
+    def optimize(cls, config, max_trials, threshold, max_mutations, scale):
+        '''Optimize the arguments of this class, returning the best arguments.
+        '''
+        random = np.random.RandomState(config.seed)
+        best = cls.DEFAULT_ARGS
+        sys.stderr.write('Initial {}\n'.format(best))
+        for _ in range(max_mutations):
+            candidate = cls.mutate(best, scale=scale, random=random)
+            winner = find_better(
+                cls.play_many(baseline_args=best, args=candidate,
+                              config=config, random=random),
+                max_trials=max_trials,
+                threshold=threshold)
+            sys.stderr.write('Trial {} -> {}\n'.format(candidate, winner))
+            if winner == 1:
+                best = candidate
+        return best
 
 
 class NothingBot:
@@ -528,6 +658,13 @@ def test_collisions():
         True,
         True,
     ])
+
+
+def test_find_better():
+    assert find_better(it.repeat(0), max_trials=100, threshold=0.99) == 0
+    assert find_better(it.repeat(1), max_trials=100, threshold=0.99) == 1
+    assert find_better(
+        it.cycle([0, 1]), max_trials=1000, threshold=0.99) is None
 
 
 def _check_shape(bodies, n, no_b=False):
