@@ -31,7 +31,8 @@ Config = collections.namedtuple(
         'bullet_speed',
         'ship_thrust',
         'ship_rspeed',
-        'ship_position',
+        'outer_ship_position',
+        'inner_ship_position',
         'ship_radius',
         'planet_orbit',
         'planet_mass',
@@ -76,7 +77,8 @@ DEFAULT_CONFIG = Config(
     bullet_speed=1.5,
     ship_thrust=1.0,
     ship_rspeed=4.0,
-    ship_position=np.array([0.9, 0.9], dtype=np.float32),
+    inner_ship_position=0.1,
+    outer_ship_position=0.9,
     ship_radius=0.025,
     planet_orbit=0.5,
     planet_mass=1.0,
@@ -165,9 +167,12 @@ def create(config):
     random = np.random.RandomState(config.seed)
 
     # ships
-    ship_0 = (config.ship_position *
+    ship_0 = (config.outer_ship_position *
               np.sign(random.rand(2).astype(np.float32) - 0.5))
-    ship_1 = -ship_0
+    ship_1 = (config.inner_ship_position *
+              _direction(2 * np.pi * np.random.rand()))
+    if random.rand() < 0.5:
+        ship_0, ship_1 = ship_1, ship_0
 
     # planets
     orientation = 2 * np.pi * random.rand()
@@ -431,7 +436,7 @@ def find_better(games, max_trials, threshold):
         else:
             nremaining = max_trials - n - 1
             if ((_pbetter(nwins=nwins0 + nremaining, nlosses=nwins1) <
-                 threshold) or
+                 threshold) and
                 ((1 - _pbetter(nwins=nwins0, nlosses=nwins1 + nremaining)) <
                  threshold)):
                 # inconclusive - not enough trials left to reach confidence
@@ -439,17 +444,12 @@ def find_better(games, max_trials, threshold):
 
 
 class ScriptBot:
-    '''Tries to stay alive first, to shoot you second.
-
-    state -- astro.State
-
-    returns -- int -- control
+    '''Tries to stay alive first, otherwise tries to shoot you.
     '''
+    # these values optimized using a random walk 1-vs-1 tournament
     DEFAULT_ARGS = dict(
-        avoid_d1=0.1,
-        avoid_d2=0.05,
-        avoid_threshold=0.3,
-        aim_threshold=0.1,
+        avoid_distance=0.1,
+        avoid_threshold=0.45,
     )
 
     def __init__(self, args, config):
@@ -480,14 +480,11 @@ class ScriptBot:
                    if no action is required
         '''
         radius = (self.config.planet_radius + self.config.ship_radius)
-        if _mag(x) < radius + self.args['avoid_d1']:
-            return _bearing(x)
-
         b = 2 * _dot(_norm(dx), x)
-        c = (_mag(x) ** 2 - (radius + self.args['avoid_d2']) ** 2)
+        c = (_mag(x) ** 2 - (radius + self.args['avoid_distance']) ** 2)
         det = b ** 2 - 4 * c
-        if 0 < det and 0 <= -b:
-            # two positive real-valued roots
+        if 0 < det and 0 <= -b + np.sqrt(det):
+            # real-valued roots & at least one positive root
             distance = -b - np.sqrt(det)
             rotation = abs(_norm_angle(_bearing(x) - b))
             speed = _mag(dx)
@@ -531,10 +528,8 @@ class ScriptBot:
         returns -- dict -- mutated arguments
         '''
         args = args.copy()
-        args['avoid_d1'] += scale * random.normal()
-        args['avoid_d2'] += scale * random.normal()
+        args['avoid_distance'] += scale * random.normal()
         args['avoid_threshold'] += scale * random.normal()
-        args['aim_threshold'] += scale * random.normal()
         return args
 
     @classmethod

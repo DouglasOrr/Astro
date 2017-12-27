@@ -9,4 +9,5 @@
 }
 .game-outcome {
     text-align: center;
+    opacity: 0.75;
 }
