@@ -597,27 +597,25 @@ class QBot(C.Chain):
         returns -- array(N x D) -- feature array (floats)
         '''
         def feature(bodies):
-            return np.concatenate((
-                bodies.x,
-                bodies.dx,
-                (np.zeros((bodies.x.shape[0], 1), dtype=np.float32)
+            return np.concatenate(
+                (bodies.x, bodies.dx) +
+                (()
                  if bodies.b is None else
-                 _norm_angle(bodies.b[:, np.newaxis])),
-            ), axis=1)
+                 (_norm_angle(bodies.b[:, np.newaxis]),)),
+                axis=1)
 
         nships = state.ships.x.shape[0]
         nplanets = state.planets.x.shape[0]
         nbullets = state.bullets.x.shape[0]
-        ndims = 5  # position (2) + velocity (2) + bearing (1)
 
         # dim 0: [planets, bullets]
         # dim 1: [type, ships, object]
         features = np.zeros(
-            (nplanets + nbullets, 1 + (ndims * nships) + ndims),
+            (nplanets + nbullets, 1 + (5 * nships) + 4),
             dtype=np.float32)
         features[:nplanets, 0] = 1  # planet flag
         features[nplanets:, 0] = -1  # bullet flag
-        robject = 1 + ndims * nships
+        robject = 1 + 5 * nships
         features[:, 1:robject] = feature(state.ships).flatten()
         features[:nplanets, robject:] = feature(state.planets)
         features[nplanets:, robject:] = feature(state.bullets)
@@ -627,7 +625,7 @@ class QBot(C.Chain):
     def __init__(self):
         super().__init__()
         with self.init_scope():
-            nf, nq = 16, 6
+            nf, nq = 15, 6
             nf0, nf1, nq0 = 32, 32, 32
             self.activation = C.functions.elu
             self.f0 = C.links.Linear(nf, nf0)
