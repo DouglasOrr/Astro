@@ -24,7 +24,7 @@ State = collections.namedtuple(
 
 Config = collections.namedtuple(
     'Config', (
-        'seed',
+        # world
         'gravity',
         'dt',
         'max_time',
@@ -32,9 +32,13 @@ Config = collections.namedtuple(
         'bullet_speed',
         'ship_thrust',
         'ship_rspeed',
+        'ship_radius',
+
+        # creation
+        'seed',
         'outer_ship_position',
         'inner_ship_position',
-        'ship_radius',
+        'max_planets',
         'planet_orbit',
         'planet_mass',
         'planet_radius',
@@ -70,7 +74,7 @@ def _from_json(obj):
 
 
 DEFAULT_CONFIG = Config(
-    seed=42,
+    # world
     gravity=0.05,
     dt=0.02,
     max_time=60,
@@ -78,9 +82,13 @@ DEFAULT_CONFIG = Config(
     bullet_speed=1.5,
     ship_thrust=1.0,
     ship_rspeed=4.0,
+    ship_radius=0.025,
+
+    # creation
+    seed=42,
     inner_ship_position=0.2,
     outer_ship_position=0.9,
-    ship_radius=0.025,
+    max_planets=4,
     planet_orbit=0.5,
     planet_mass=1.0,
     planet_radius=0.2,
@@ -176,23 +184,25 @@ def create(config):
         ship_0, ship_1 = ship_1, ship_0
 
     # planets
-    orientation = 2 * np.pi * random.rand()
-    planet_0 = config.planet_orbit * _direction(orientation)
-    planet_0_dx = (np.sqrt(config.gravity * config.planet_mass / 2) *
-                   _direction(orientation + np.pi / 2))
-    planet_1 = -planet_0
-    planet_1_dx = -planet_0_dx
+    nplanets = random.randint(2, config.max_planets + 1)
+    orientation = (2 * np.pi * random.rand() +
+                   np.linspace(0, 2 * np.pi, num=nplanets, endpoint=False))
+    reverse = random.choice((-1, 1))
+    planets = config.planet_orbit * _direction(orientation)
+    planets_dx = (
+        np.sqrt(config.gravity * config.planet_mass * (nplanets - 1) / 2) *
+        _direction(orientation + reverse * np.pi / 2))
 
     return State(
         ships=Bodies(x=np.stack((ship_0, ship_1), axis=0),
                      dx=np.zeros((2, 2), dtype=np.float32),
                      b=(2 * np.pi * random.rand(2).astype(np.float32))),
-        planets=Bodies(x=np.stack((planet_0, planet_1), axis=0),
-                       dx=np.stack((planet_0_dx, planet_1_dx), axis=0),
+        planets=Bodies(x=planets,
+                       dx=planets_dx,
                        b=None),
         bullets=Bodies(x=np.zeros((0, 2), dtype=np.float32),
                        dx=np.zeros((0, 2), dtype=np.float32),
-                       b=np.zeros((0,), dtype=np.float32)),
+                       b=None),
         reload=0.0,
         t=0.0,
     )
@@ -234,7 +244,7 @@ def _mask(bodies, mask):
     return Bodies(
         x=bodies.x[mask],
         dx=bodies.dx[mask],
-        b=bodies.b[mask])
+        b=None if bodies.b is None else bodies.b[mask])
 
 
 def _update_bodies(bodies, a, db, dt, cull_on_exit):
@@ -344,11 +354,7 @@ def step(state, control, config):
                 next_bullets.dx,
                 ships.dx + config.bullet_speed * ships_direction
             ], axis=0),
-            b=np.concatenate([
-                next_bullets.b,
-                ships.b,
-            ], axis=0),
-        )
+            b=None)
         next_reload -= config.reload_time
 
     next_state = State(
@@ -361,18 +367,17 @@ def step(state, control, config):
         planets=_update_bodies(
             state.planets,
             a=_gravity(state.planets, state.planets.x, config=config),
-            db=0,
+            db=None,
             dt=config.dt,
             cull_on_exit=False),
         bullets=_update_bodies(
             next_bullets,
             a=0,
-            db=0,
+            db=None,
             dt=config.dt,
             cull_on_exit=True),
         reload=next_reload,
-        t=state.t + config.dt,
-    )
+        t=state.t + config.dt)
     return next_state, np.zeros(nships, dtype=np.float32)
 
 
@@ -739,11 +744,11 @@ def _check_shape(bodies, n, no_b=False):
 def _check_state(state):
     _check_shape(state.ships, 2)
     _check_shape(state.planets, 2, no_b=True)
-    _check_shape(state.bullets, 0)
+    _check_shape(state.bullets, 0, no_b=True)
 
 
 def test_create_step_swap_roundtrip():
-    state_0 = create(DEFAULT_CONFIG)
+    state_0 = create(DEFAULT_CONFIG._replace(max_planets=2))
     _check_state(state_0)
 
     state_1, reward = step(state_0, np.array([2, 2]), DEFAULT_CONFIG)

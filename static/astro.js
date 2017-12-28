@@ -40,13 +40,12 @@ function _draw_bullets(ctx, config, bullets) {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = size / 4;
     for (var i = 0; i < bullets.x.length; ++i) {
-        var p = bullets.x[i];
-        var a = bullets.b[i];
-        var ax = 0.5 * size * Math.sin(a);
-        var ay = 0.5 * size * Math.cos(a);
+        var x = bullets.x[i];
+        var dx = bullets.dx[i];
+        var a = 0.5 * size / Math.sqrt(dx[0] ** 2 + dx[1] ** 2);
         ctx.beginPath();
-        ctx.moveTo(p[0] - ax, p[1] - ay);
-        ctx.lineTo(p[0] + ax, p[1] + ay);
+        ctx.moveTo(x[0] - a * dx[0], x[1] - a * dx[1]);
+        ctx.lineTo(x[0] + a * dx[0], x[1] + a * dx[1]);
         ctx.stroke();
     }
 }
