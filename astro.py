@@ -4,6 +4,7 @@ learning.
 
 import numpy as np
 import scipy as sp
+import chainer as C
 import scipy.stats  # NOQA
 import itertools as it
 import collections
@@ -73,11 +74,11 @@ DEFAULT_CONFIG = Config(
     gravity=0.05,
     dt=0.02,
     max_time=60,
-    reload_time=0.2,
+    reload_time=0.3,
     bullet_speed=1.5,
     ship_thrust=1.0,
     ship_rspeed=4.0,
-    inner_ship_position=0.1,
+    inner_ship_position=0.2,
     outer_ship_position=0.9,
     ship_radius=0.025,
     planet_orbit=0.5,
@@ -575,6 +576,70 @@ class NothingBot:
     '''
     def __call__(self, state):
         return 2
+
+
+class QBot(C.Chain):
+    '''Deep Q learning RL bot.
+    '''
+    @staticmethod
+    def get_features(state):
+        '''Create the feature vector from the current state.
+        A little feature engineering here to make the model's job easier
+        - concatenate the ships feature vector onto every other object.
+
+        state -- astro.State
+
+        returns -- array(N x D) -- feature array (floats)
+        '''
+        def feature(bodies):
+            return np.concatenate((
+                bodies.x,
+                bodies.dx,
+                (np.zeros((bodies.x.shape[0], 1), dtype=np.float32)
+                 if bodies.b is None else
+                 _norm_angle(bodies.b[:, np.newaxis])),
+            ), axis=1)
+
+        nships = state.ships.x.shape[0]
+        nplanets = state.planets.x.shape[0]
+        nbullets = state.bullets.x.shape[0]
+        ndims = 5  # position (2) + velocity (2) + bearing (1)
+
+        # dim 0: [planets, bullets]
+        # dim 1: [type, ships, object]
+        features = np.zeros(
+            (nplanets + nbullets, 1 + (ndims * nships) + ndims),
+            dtype=np.float32)
+        features[:nplanets, 0] = 1  # planet flag
+        features[nplanets:, 0] = -1  # bullet flag
+        robject = 1 + ndims * nships
+        features[:, 1:robject] = feature(state.ships).flatten()
+        features[:nplanets, robject:] = feature(state.planets)
+        features[nplanets:, robject:] = feature(state.bullets)
+
+        return features
+
+    def __init__(self):
+        super().__init__()
+        with self.init_scope():
+            nf, nq = 16, 6
+            nf0, nf1, nq0 = 32, 32, 32
+            self.activation = C.functions.elu
+            self.f0 = C.links.Linear(nf, nf0)
+            self.f1 = C.links.Linear(nf0, nf1)
+            self.pool = C.functions.max
+            self.q0 = C.links.Linear(nf1, nq0)
+            self.q1 = C.links.Linear(nq0, nq)
+
+    def __call__(self, state):
+        features = C.Variable(self.get_features(state))
+        f1 = self.f1(self.activation(self.f0(features)))
+        pool = self.pool(f1, axis=0).reshape(1, -1)
+        q = C.functions.tanh(
+            self.q1(self.activation(self.q0(pool)))
+        ).reshape(-1)
+        print(q.data)
+        return None  # TODO
 
 
 def save_log(path, config, states):
