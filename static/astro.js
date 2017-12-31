@@ -220,7 +220,7 @@ $(function() {
 
     // Replayer only
     if ($('.replay-file').length) {
-        $('.replay-file').change(_select_replay);
+        $('.replay-file').change(_select_replay).focus();
         $(window).keypress(function (e) {
             if (e.key == "r") {
                 replay.restart();
@@ -230,8 +230,6 @@ $(function() {
 
     // Player only
     if ($('.bot-selector').length) {
-        // $(window).keydown(controller.keyevent);
-        // $(window).keyup(controller.keyevent);
         $(window).on('keyup keydown', null, controller, controller.keyevent);
         $(window).keypress(function (e) {
             if (e.key == "r") {
