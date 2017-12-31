@@ -4,7 +4,7 @@ learning.
 
 import numpy as np
 import scipy as sp
-import chainer as C
+import torch as T
 import scipy.stats  # NOQA
 import itertools as it
 import collections
@@ -583,7 +583,7 @@ class NothingBot:
         return 2
 
 
-class QBot(C.Chain):
+class QBot(T.nn.Module):
     '''Deep Q learning RL bot.
     '''
     @staticmethod
@@ -624,24 +624,21 @@ class QBot(C.Chain):
 
     def __init__(self):
         super().__init__()
-        with self.init_scope():
-            nf, nq = 15, 6
-            nf0, nf1, nq0 = 32, 32, 32
-            self.activation = C.functions.elu
-            self.f0 = C.links.Linear(nf, nf0)
-            self.f1 = C.links.Linear(nf0, nf1)
-            self.pool = C.functions.max
-            self.q0 = C.links.Linear(nf1, nq0)
-            self.q1 = C.links.Linear(nq0, nq)
+        nf, nq = 15, 6
+        nf0, nf1, nq0 = 32, 32, 32
+        self.activation = T.nn.functional.elu
+        self.f0 = T.nn.Linear(nf, nf0)
+        self.f1 = T.nn.Linear(nf0, nf1)
+        self.pool = lambda x, axis: T.max(x, axis)[0]
+        self.q0 = T.nn.Linear(nf1, nq0)
+        self.q1 = T.nn.Linear(nq0, nq)
 
     def __call__(self, state):
-        features = C.Variable(self.get_features(state))
+        features = T.autograd.Variable(T.FloatTensor(self.get_features(state)))
         f1 = self.f1(self.activation(self.f0(features)))
-        pool = self.pool(f1, axis=0).reshape(1, -1)
-        q = C.functions.tanh(
-            self.q1(self.activation(self.q0(pool)))
-        ).reshape(-1)
-        print(q.data)
+        pool = self.pool(f1, axis=0)
+        q = T.tanh(self.q1(self.activation(self.q0(pool))))
+        print(q)
         return None  # TODO
 
 
