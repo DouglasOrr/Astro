@@ -39,7 +39,7 @@ def build():
 
 
 def run(command):
-    sh('docker run --rm -it -v `pwd`:/work -w /work'
+    sh('docker run --rm -it -v `pwd`:/work -w /work --ipc=host'
        ' ${IMAGE} ${COMMAND}',
        IMAGE=IMAGE,
        COMMAND=' '.join(command))
@@ -66,7 +66,8 @@ def server(detach):
 def notebook():
     sh('docker rm -f ${NOTEBOOK} || true',
        NOTEBOOK=NOTEBOOK)
-    sh('docker run -d --name ${NOTEBOOK} -v `pwd`:/work -w /work -p 8888:8888'
+    sh('docker run -d --name ${NOTEBOOK} -v `pwd`:/work -w /work'
+       ' -p 8888:8888 --ipc=host'
        ' ${IMAGE} bash -c "'
        'jupyter notebook'
        ' --allow-root --NotebookApp.password=${NOTEBOOK_PASSWORD} --ip=\'*\''
