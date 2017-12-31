@@ -383,7 +383,13 @@ def step(state, control, config):
 
 def swap_ships(state):
     '''Swap the two ships in "state", so that bots can play against each other.
+
+    state -- astro.State or None
+
+    returns -- astro.State or None
     '''
+    if state is None:
+        return None
     s = state.ships
     return State(
         ships=Bodies(x=s.x[::-1], dx=s.dx[::-1], b=s.b[::-1]),
@@ -393,6 +399,28 @@ def swap_ships(state):
         t=state.t)
 
 
+def save_log(path, config, states):
+    '''Saves a game log as jsonlines.
+    '''
+    with open(path, 'w') as f:
+        f.write(json.dumps(_to_json(config)) + '\n')
+        for state in states:
+            f.write(json.dumps(_to_json(state)) + '\n')
+
+
+def load_log(path):
+    '''Load a game log from file.
+
+    path -- string -- file path
+
+    returns -- (astro.Config, [astro.State])
+    '''
+    with open(path, 'r') as f:
+        config = _from_json(json.loads(next(f)))
+        states = [_from_json(json.loads(line)) for line in f]
+        return config, states
+
+
 def play(bot_0, bot_1, config):
     '''Play out the game between bot_0 & bot_1.
 
@@ -400,25 +428,42 @@ def play(bot_0, bot_1, config):
 
     config -- astro.Config
 
-    returns -- int or None -- 0 if bot_0 won, 1 if bot_1 won, None if a draw
+    returns -- (int or None, [astro.State]) --
+               winner: 0 if bot_0 won, 1 if bot_1 won, None if a draw
+               states: the game
     '''
-    state = create(config)
+    states = [create(config)]
     while True:
+        state = states[-1]
         control = np.array([bot_0(state), bot_1(swap_ships(state))])
         state, reward = step(state, control, config)
+        if hasattr(bot_0, 'reward'):
+            bot_0.reward(state, reward[0])
+        if hasattr(bot_1, 'reward'):
+            bot_1.reward(swap_ships(state), reward[1])
         if state is None:
             if reward[1] < reward[0]:
-                return 0
+                return 0, states
             elif reward[0] < reward[1]:
-                return 1
+                return 1, states
             else:
-                return None
+                return None, states
+        states.append(state)
+
+
+def generate_configs(config):
+    '''Generate an infinite sequence of differently seeded configurations from
+    a single seed configuration.
+    '''
+    random = np.random.RandomState(config.seed)
+    while True:
+        yield config._replace(seed=random.randint(1 << 30))
 
 
 def find_better(games, max_trials, threshold):
     '''Find the better bot from a series of game results.
 
-    games -- iterable(int or None) -- results of play()
+    games -- iterable(int or None) -- iterable of first result of play()
 
     max_trials -- int -- trial limit before giving up
 
@@ -539,24 +584,6 @@ class ScriptBot:
         return args
 
     @classmethod
-    def play_many(cls, baseline_args, args, config, random):
-        '''Return an iterable of games played between two ScriptBots.
-
-        baseline_args -- dict -- args to use as a baseline
-
-        args -- dict -- args to compete
-
-        config -- astro.Config -- basic config to use
-
-        random -- numpy.random.RandomState -- generator
-
-        returns -- iterable(int or None) -- game winners
-        '''
-        while True:
-            config = config._replace(seed=random.randint(1 << 30))
-            yield play(cls(baseline_args, config), cls(args, config), config)
-
-    @classmethod
     def optimize(cls, config, max_trials, threshold, max_mutations, scale):
         '''Optimize the arguments of this class, returning the best arguments.
         '''
@@ -566,8 +593,8 @@ class ScriptBot:
         for _ in range(max_mutations):
             candidate = cls.mutate(best, scale=scale, random=random)
             winner = find_better(
-                cls.play_many(baseline_args=best, args=candidate,
-                              config=config, random=random),
+                (play(cls(best, c), cls(candidate, c), c)[0]
+                 for c in generate_configs(config)),
                 max_trials=max_trials,
                 threshold=threshold)
             sys.stderr.write('Trial {} -> {}\n'.format(candidate, winner))
@@ -583,8 +610,30 @@ class NothingBot:
         return 2
 
 
-class QBot(T.nn.Module):
-    '''Deep Q learning RL bot.
+class EpsilonGreedy:
+    '''A stateful bot which returns an action according to a random policy, or
+    `None` if the random policy should not be active.
+    '''
+    def __init__(self, t_in, t_out, seed):
+        self.t_in, self.t_out = t_in, t_out
+        self._random = np.random.RandomState(seed)
+        self._t = 0
+        self._policy = None
+
+    def __call__(self, state):
+        dt = state.t - self._t
+        if (self._policy is None and
+                np.exp(-dt / self.t_in) < self._random.rand()):
+            self._policy = self._random.randint(0, 5)
+        elif (self._policy is not None and
+              np.exp(-dt / self.t_out) < self._random.rand()):
+            self._policy = None
+        self._t = state.t
+        return self._policy
+
+
+class QNetwork(T.nn.Module):
+    '''Deep Q learning RL network for playing astro.
     '''
     @staticmethod
     def get_features(state):
@@ -601,7 +650,7 @@ class QBot(T.nn.Module):
                 (bodies.x, bodies.dx) +
                 (()
                  if bodies.b is None else
-                 (_norm_angle(bodies.b[:, np.newaxis]),)),
+                 (_norm_angle(bodies.b[:, np.newaxis]) / np.pi,)),
                 axis=1)
 
         nships = state.ships.x.shape[0]
@@ -625,43 +674,77 @@ class QBot(T.nn.Module):
     def __init__(self):
         super().__init__()
         nf, nq = 15, 6
-        nf0, nf1, nq0 = 32, 32, 32
+        nh = 256
         self.activation = T.nn.functional.elu
-        self.f0 = T.nn.Linear(nf, nf0)
-        self.f1 = T.nn.Linear(nf0, nf1)
-        self.pool = lambda x, axis: T.max(x, axis)[0]
-        self.q0 = T.nn.Linear(nf1, nq0)
-        self.q1 = T.nn.Linear(nq0, nq)
+        self.f0 = T.nn.Linear(nf, nh)
+        self.f1 = T.nn.Linear(nh, nh)
+        self.pool = lambda x: T.max(x, 0)[0]
+        self.q1 = T.nn.Linear(nh, nh)
+        self.q0 = T.nn.Linear(nh, nq)
+
+        self.opt = T.optim.Adam(self.parameters(), betas=(0.9, 0.99))
+
+    def __call__(self, x):
+        # return T.tanh(self.q0(self.pool(self.f0(x))))
+        pool = self.pool(self.f1(self.activation(self.f0(x))))
+        return T.tanh(self.q0(self.activation(self.q1(pool))))
+
+
+class QBot:
+    '''A basic "evaluation mode" Q-learning bot with no epsilon-greedy
+    policy & no training.
+    '''
+    def __init__(self, network):
+        self.network = network
+
+    def q(self, state):
+        return self.network(
+            T.autograd.Variable(
+                T.FloatTensor(
+                    self.network.get_features(state))))
 
     def __call__(self, state):
-        features = T.autograd.Variable(T.FloatTensor(self.get_features(state)))
-        f1 = self.f1(self.activation(self.f0(features)))
-        pool = self.pool(f1, axis=0)
-        q = T.tanh(self.q1(self.activation(self.q0(pool))))
-        print(q)
-        return None  # TODO
+        return np.argmax(self.q(state).data.numpy())
 
 
-def save_log(path, config, states):
-    '''Saves a game log as jsonlines.
-    '''
-    with open(path, 'w') as f:
-        f.write(json.dumps(_to_json(config)) + '\n')
-        for state in states:
-            f.write(json.dumps(_to_json(state)) + '\n')
+class QBotTrainer(QBot):
+    def __init__(self, network, seed):
+        super().__init__(network)
+        self.greedy = EpsilonGreedy(t_in=1.0, t_out=0.1, seed=seed)
+        self.n_steps = 10
+        self.discount = 0.99
+        self.final_step_loss = []
+        self._buffer = []
 
+    def __call__(self, state):
+        # Act according to an e-greedy policy or Q
+        q = self.q(state)
+        greedy = self.greedy(state)
+        action = (greedy if greedy is not None else np.argmax(q.data.numpy()))
+        # print('QBot[{:x}] -- {} -- {} -- {}'.format(
+        #     id(self) % 256, action, greedy is not None, q.data.numpy()))
+        self._buffer.append(q[action])
+        return action
 
-def load_log(path):
-    '''Load a game log from file.
-
-    path -- string -- file path
-
-    returns -- (astro.Config, [astro.State])
-    '''
-    with open(path, 'r') as f:
-        config = _from_json(json.loads(next(f)))
-        states = [_from_json(json.loads(line)) for line in f]
-        return config, states
+    def reward(self, new_state, reward):
+        # print('QBot[{:x}] reward -- {}'.format(id(self) % 256, reward))
+        if new_state is None or self.n_steps <= len(self._buffer):
+            # we know there are only rewards for terminating states, in this
+            # game, so no need to store any others
+            if new_state is None:
+                r = min(0, reward)  # TODO - DO NOT KEEP THIS
+            else:
+                r = self.discount * np.max(self.q(new_state).data.numpy())
+            target = T.autograd.Variable(T.FloatTensor(
+                r * (self.discount ** np.arange(len(self._buffer)))))
+            q = T.cat(self._buffer[::-1])
+            e = ((target - q) ** 2).sum(0)
+            self.network.opt.zero_grad()
+            (e / self.n_steps).backward()
+            self.network.opt.step()
+            if new_state is None:
+                self.final_step_loss.append(float(e.data) / len(self._buffer))
+            self._buffer.clear()
 
 
 # Tests
