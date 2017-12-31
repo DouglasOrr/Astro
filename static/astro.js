@@ -106,9 +106,20 @@ var replay_player = (new function() {
             if (states.length === 0) {
                 window.clearInterval(this._interval);
             } else {
-                _render(config, states.shift());
+                var state = states.shift();
+                if (state !== null) {
+                    _render(config, state);
+                }
             }
         }, config.dt * 1000);
+    }
+}());
+
+var replay = (new function() {
+    this.config = null,
+    this.states = null,
+    this.restart = function () {
+        replay_player.play(this.config, this.states.slice());
     }
 }());
 
@@ -117,9 +128,9 @@ function _select_replay(e) {
         var reader = new FileReader();
         reader.onload = function (e) {
             var lines = e.target.result.trim().split('\n');
-            var config = _load_json(JSON.parse(lines.shift()));
-            var states = lines.map(x => _load_json(JSON.parse(x)));
-            replay_player.play(config, states);
+            replay.config = _load_json(JSON.parse(lines.shift()));
+            replay.states = lines.map(x => _load_json(JSON.parse(x)));
+            replay.restart();
         };
         reader.readAsText(e.target.files[0]);
         $(e.target).hide();
@@ -208,7 +219,14 @@ $(function() {
     $(window).resize(_resize_canvas);
 
     // Replayer only
-    $('.replay-file').change(_select_replay);
+    if ($('.replay-file').length) {
+        $('.replay-file').change(_select_replay);
+        $(window).keypress(function (e) {
+            if (e.key == "r") {
+                replay.restart();
+            }
+        });
+    }
 
     // Player only
     if ($('.bot-selector').length) {
