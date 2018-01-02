@@ -97,7 +97,7 @@ def norm(x):
 
     returns -- array(... x 2)
     '''
-    return x / (mag(x) + 1e-12)
+    return x / (mag(x) + 1e-12)[..., np.newaxis]
 
 
 def norm_angle(b):
