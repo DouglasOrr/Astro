@@ -712,7 +712,7 @@ class QBotTrainer(QBot):
         super().__init__(network)
         self.greedy = EpsilonGreedy(t_in=1.0, t_out=0.1, seed=seed)
         self.n_steps = 10
-        self.discount = 0.99
+        self.discount = 0.98
         self.final_step_loss = []
         self._buffer = []
 
