@@ -64,9 +64,9 @@ class QNetwork(T.nn.Module):
 
         return features
 
-    def __init__(self):
+    def __init__(self, solo):
         super().__init__()
-        nf, nq = 15, 6
+        nf, nq = (10 if solo else 15), 6
         nh = 256
         self.activation = T.nn.functional.elu
         self.f0 = T.nn.Linear(nf, nh)

@@ -15,15 +15,6 @@ BOTS = dict(
 GAMES = lru.LRU(10)  # to stop us running out of memory
 
 
-def _render_game(game):
-    return flask.jsonify(dict(
-        id=game['id'],
-        bot=game['bot']['name'],
-        config=util.to_jsonable(game['config']),
-        state=util.to_jsonable(game['state']),
-        reward=util.to_jsonable(game['reward'])))
-
-
 # App
 
 @app.route('/bots')
@@ -52,7 +43,7 @@ def game_start():
 def game_tick():
     game = GAMES[flask.request.args['id']]
     player_control = int(flask.request.args['control'])
-    bot_control = game['bot'](core.swap_ships(game['state']))
+    bot_control = game['bot'](core.roll_ships(game['state'], 1))
     game['state'], reward = core.step(
         game['state'],
         np.array([player_control, bot_control]),

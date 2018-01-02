@@ -100,26 +100,26 @@ function _load_json(obj) {
 
 var replay_player = (new function() {
     this._interval = null,
-    this.play = function (config, states) {
+    this.play = function (game) {
         window.clearInterval(this._interval);
+        var frame = -1;
         this._interval = window.setInterval(function () {
-            if (states.length === 0) {
-                window.clearInterval(this._interval);
-            } else {
-                var state = states.shift();
-                if (state !== null) {
-                    _render(config, state);
+            if (++frame < game.ticks.length) {
+                var tick = game.ticks[frame];
+                if (tick !== null) {
+                    _render(game.config, tick.state);
                 }
+            } else {
+                window.clearInterval(this._interval);
             }
-        }, config.dt * 1000);
+        }, game.config.dt * 1000);
     }
 }());
 
 var replay = (new function() {
-    this.config = null,
-    this.states = null,
+    this.game = null,
     this.restart = function () {
-        replay_player.play(this.config, this.states.slice());
+        replay_player.play(this.game);
     }
 }());
 
@@ -128,8 +128,8 @@ function _select_replay(e) {
         var reader = new FileReader();
         reader.onload = function (e) {
             var lines = e.target.result.trim().split('\n');
-            replay.config = _load_json(JSON.parse(lines.shift()));
-            replay.states = lines.map(x => _load_json(JSON.parse(x)));
+            replay.game = _load_json(JSON.parse(lines.shift()));
+            replay.game.ticks = lines.map(x => _load_json(JSON.parse(x)));
             replay.restart();
         };
         reader.readAsText(e.target.files[0]);

@@ -1,4 +1,4 @@
-from .. import core
+from .. import core, script
 import itertools as it
 import numpy as np
 
@@ -47,11 +47,37 @@ def test_create_step_swap_roundtrip():
 
             # other methods
             if not config.solo:
-                _check_state(core.swap_ships(state_1), config)
+                _check_state(core.roll_ships(state_1, 1), config)
 
-            # roundtrip via file
-            core.save_log('/tmp/astro.test.log', config, [state_0, state_1])
-            re_config, re_states = core.load_log('/tmp/astro.test.log')
-            np.testing.assert_equal(re_config, config)
-            assert len(re_states) == 2
-            np.testing.assert_equal(re_states, [state_0, state_1])
+
+def test_play_solo():
+    for config in it.islice(core.generate_configs(core.SOLO_CONFIG), 3):
+        # should always fall into a planet & lose
+        game = core.play(config, [script.NothingBot()])
+        assert game.config == config
+        assert game.winner is None
+
+        # roundtrip via file
+        core.save_log('/tmp/astro.test.log', game)
+        np.testing.assert_equal(core.load_log('/tmp/astro.test.log'), game)
+
+
+def test_play():
+    for config in it.islice(core.generate_configs(core.DEFAULT_CONFIG), 3):
+        game = core.play(config, [script.NothingBot(), script.NothingBot()])
+        assert game.config == config
+
+        # roundtrip via file
+        core.save_log('/tmp/astro.test.log', game)
+        np.testing.assert_equal(core.load_log('/tmp/astro.test.log'), game)
+
+
+def test_script():
+    for config in it.islice(core.generate_configs(core.SOLO_CONFIG), 3):
+        game = core.play(config, [script.ScriptBot.create(config)])
+        assert game.winner == 0
+
+    for config in it.islice(core.generate_configs(core.DEFAULT_CONFIG), 3):
+        game = core.play(config, [
+            script.NothingBot(), script.ScriptBot.create(config)])
+        assert game.winner == 1

@@ -39,6 +39,14 @@ Config = collections.namedtuple(
         'planet_radius',
     ))
 
+Tick = collections.namedtuple(
+    'Tick',
+    ('state', 'control', 'bot_data'))
+
+Game = collections.namedtuple(
+    'Game',
+    ('config', 'winner', 'ticks'))
+
 
 DEFAULT_CONFIG = Config(
     # world
@@ -63,6 +71,15 @@ DEFAULT_CONFIG = Config(
 )
 SOLO_CONFIG = DEFAULT_CONFIG._replace(solo=True, reload_time=1000)
 SOLO_EASY_CONFIG = SOLO_CONFIG._replace(max_planets=1)
+
+
+def generate_configs(config):
+    '''Generate an infinite sequence of differently seeded configurations from
+    a single seed configuration.
+    '''
+    random = np.random.RandomState(config.seed)
+    while True:
+        yield config._replace(seed=random.randint(1 << 30))
 
 
 def create(config):
@@ -238,7 +255,8 @@ def step(state, control, config):
 
     if config.max_time <= state.t + config.dt:
         # End of game (timeout) - return reward & terminating state
-        return None, np.zeros(nships, dtype=np.float32)
+        # (in solo games, this counts as a win)
+        return None, np.full(nships, 1 if config.solo else 0, dtype=np.float32)
 
     # fire bullets
     next_reload = state.reload + config.dt
@@ -284,10 +302,13 @@ def step(state, control, config):
     return next_state, np.zeros(nships, dtype=np.float32)
 
 
-def swap_ships(state):
-    '''Swap the two ships in "state", so that bots can play against each other.
+def roll_ships(state, index):
+    '''Roll the ships in "state", so that bots can play against each other,
+    and "my bot" is always at index 0.
 
     state -- astro.State or None
+
+    index -- int -- index that should be moved to zero
 
     returns -- astro.State or None
     '''
@@ -295,20 +316,94 @@ def swap_ships(state):
         return None
     s = state.ships
     return State(
-        ships=Bodies(x=s.x[::-1], dx=s.dx[::-1], b=s.b[::-1]),
+        ships=Bodies(
+            x=np.roll(s.x, -index, 0),
+            dx=np.roll(s.dx, -index, 0),
+            b=np.roll(s.b, -index, 0)),
         planets=state.planets,
         bullets=state.bullets,
         reload=state.reload,
         t=state.t)
 
 
-def save_log(path, config, states):
+class Bot:
+    def __call__(self, state):
+        '''Called to get the bot's control output for a given state.
+
+        state -- astro.State
+
+        returns -- int -- control signal (see `step`)
+        '''
+        raise NotImplementedError
+
+    def reward(self, state, reward):
+        '''Called to inform the bot of a reward in the given new state.
+
+        state -- astro.State
+
+        reward -- float -- game reward signal
+        '''
+        pass
+
+    @property
+    def data(self):
+        '''Get internal data from the bot, to be saved alongside the log,
+        if available.
+
+        returns -- jsonable object
+        '''
+        pass
+
+
+def play(config, bots):
+    '''Play out the game between bot_0 & bot_1.
+
+    config -- astro.Config
+
+    bots -- [Bot] -- bots to play, where each bot should be like `astro.Bot`
+
+    returns -- astro.Game -- including game outcome
+    '''
+    ticks = []
+    state = create(config)
+    while True:
+        # 1. Gather input & record state
+        control = np.array([bot(roll_ships(state, index))
+                            for index, bot in enumerate(bots)])
+        bot_data = [bot.data if hasattr(bot, 'data') else None
+                    for bot in bots]
+        ticks.append(Tick(
+            state=state,
+            control=control,
+            bot_data=bot_data))
+
+        # 2. Advance the game physics
+        state, reward = step(state, control, config)
+
+        # 3. Provide rewards & handle end-of-game
+        for index, bot in enumerate(bots):
+            if hasattr(bot, 'reward'):
+                bot.reward(roll_ships(state, index), reward[index])
+        if state is None:
+            return Game(
+                config=config,
+                ticks=ticks,
+                winner=None if np.max(reward) < 1 else int(np.argmax(reward)),
+            )
+
+
+def save_log(path, game):
     '''Saves a game log as jsonlines.
+
+    path -- string -- file path
+
+    game -- astro.Game
     '''
     with open(path, 'w') as f:
-        f.write(util.to_json(config) + '\n')
-        for state in states:
-            f.write(util.to_json(state) + '\n')
+        f.write(util.to_json(
+            dict(config=game.config, winner=game.winner)) + '\n')
+        for tick in game.ticks:
+            f.write(util.to_json(tick) + '\n')
 
 
 def load_log(path):
@@ -316,48 +411,12 @@ def load_log(path):
 
     path -- string -- file path
 
-    returns -- (astro.Config, [astro.State])
+    returns -- astro.Game
     '''
     with open(path, 'r') as f:
-        config = util.from_json(next(f))
-        states = [util.from_json(line) for line in f]
-        return config, states
-
-
-def play(bot_0, bot_1, config):
-    '''Play out the game between bot_0 & bot_1.
-
-    bot_0, bot_1 -- bots to play
-
-    config -- astro.Config -- must not be "solo"
-
-    returns -- (int or None, [astro.State]) --
-               winner: 0 if bot_0 won, 1 if bot_1 won, None if a draw
-               states: the game
-    '''
-    states = [create(config)]
-    while True:
-        state = states[-1]
-        control = np.array([bot_0(state), bot_1(swap_ships(state))])
-        state, reward = step(state, control, config)
-        if hasattr(bot_0, 'reward'):
-            bot_0.reward(state, reward[0])
-        if hasattr(bot_1, 'reward'):
-            bot_1.reward(swap_ships(state), reward[1])
-        if state is None:
-            if reward[1] < reward[0]:
-                return 0, states
-            elif reward[0] < reward[1]:
-                return 1, states
-            else:
-                return None, states
-        states.append(state)
-
-
-def generate_configs(config):
-    '''Generate an infinite sequence of differently seeded configurations from
-    a single seed configuration.
-    '''
-    random = np.random.RandomState(config.seed)
-    while True:
-        yield config._replace(seed=random.randint(1 << 30))
+        header = util.from_json(next(f))
+        ticks = [util.from_json(line) for line in f]
+        return Game(
+            config=header['config'],
+            winner=header['winner'],
+            ticks=ticks)

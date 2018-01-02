@@ -74,6 +74,10 @@ class ScriptBot:
                 return self._fly_to(state, b, self.args['avoid_threshold'],
                                     fwd=True)
 
+        # no enemy to aim for!
+        if self.config.solo:
+            return 2
+
         # aim for the enemy
         enemy_distance = util.mag(state.ships.x[1] - state.ships.x[0])
         bullet_time = (enemy_distance / self.config.bullet_speed)
