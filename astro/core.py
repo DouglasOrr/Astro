@@ -30,6 +30,7 @@ Config = collections.namedtuple(
 
         # creation
         'seed',
+        'solo',
         'outer_ship_position',
         'inner_ship_position',
         'max_planets',
@@ -52,6 +53,7 @@ DEFAULT_CONFIG = Config(
 
     # creation
     seed=42,
+    solo=False,
     inner_ship_position=0.2,
     outer_ship_position=0.9,
     max_planets=4,
@@ -59,44 +61,57 @@ DEFAULT_CONFIG = Config(
     planet_mass=1.0,
     planet_radius=0.2,
 )
+SOLO_CONFIG = DEFAULT_CONFIG._replace(solo=True, reload_time=1000)
+SOLO_EASY_CONFIG = SOLO_CONFIG._replace(max_planets=1)
 
 
 def create(config):
     '''Create a new game state randomly.
-
-    Currently only supports the "binary stars" map - two equal mass & size
-    stars in orbit of one another.
     '''
     random = np.random.RandomState(config.seed)
+    nplanets = random.randint(1, config.max_planets + 1)
 
-    # ships
-    ship_0 = (config.outer_ship_position *
-              np.sign(random.rand(2).astype(np.float32) - 0.5))
-    ship_1 = (config.inner_ship_position *
-              util.direction(2 * np.pi * np.random.rand()))
-    if random.rand() < 0.5:
-        ship_0, ship_1 = ship_1, ship_0
+    # 1. ships
+    outer = (config.outer_ship_position *
+             np.sign(random.rand(2).astype(np.float32) - 0.5))
+    inner = (config.inner_ship_position *
+             util.direction(2 * np.pi * np.random.rand()))
+    if nplanets == 1 and config.solo:
+        ships = outer[np.newaxis, ...]
+    elif nplanets == 1:
+        ships = np.stack((outer, -outer), axis=0)
+    elif config.solo:
+        ships = (outer if random.rand() < 0.5 else inner)[np.newaxis, ...]
+    else:
+        # randomly choose middle/outer initialization for each ship
+        ships = np.stack(
+            (outer, inner) if random.rand() < 0.5 else (inner, outer),
+            axis=0)
+    ships_dx = np.zeros_like(ships)
+    ships_b = 2 * np.pi * random.rand(*ships.shape[:-1]).astype(np.float32)
 
-    # planets
-    nplanets = random.randint(2, config.max_planets + 1)
-    orientation = (2 * np.pi * random.rand() +
-                   np.linspace(0, 2 * np.pi, num=nplanets, endpoint=False))
-    reverse = random.choice((-1, 1))
-    planets = config.planet_orbit * util.direction(orientation)
-    planets_dx = (
-        np.sqrt(config.gravity * config.planet_mass * (nplanets - 1) / 2) *
-        util.direction(orientation + reverse * np.pi / 2))
+    # 2. planets
+    if nplanets == 1:
+        planets = np.zeros((1, 2), dtype=np.float32)
+        planets_dx = np.zeros_like(planets)
+    else:
+        orientation = (2 * np.pi * random.rand() +
+                       np.linspace(0, 2 * np.pi, num=nplanets, endpoint=False))
+        reverse = random.choice((-1, 1))
+        planets = config.planet_orbit * util.direction(orientation)
+        planets_dx = (
+            np.sqrt(config.gravity * config.planet_mass * (nplanets - 1) / 2) *
+            util.direction(orientation + reverse * np.pi / 2))
 
+    # 3. aggregate everything together into state
     return State(
-        ships=Bodies(x=np.stack((ship_0, ship_1), axis=0),
-                     dx=np.zeros((2, 2), dtype=np.float32),
-                     b=(2 * np.pi * random.rand(2).astype(np.float32))),
-        planets=Bodies(x=planets,
-                       dx=planets_dx,
-                       b=None),
-        bullets=Bodies(x=np.zeros((0, 2), dtype=np.float32),
-                       dx=np.zeros((0, 2), dtype=np.float32),
-                       b=None),
+        ships=Bodies(x=ships, dx=ships_dx, b=ships_b),
+        planets=Bodies(x=planets, dx=planets_dx, b=None),
+        bullets=Bodies(
+            x=np.zeros((0, 2), dtype=np.float32),
+            dx=np.zeros((0, 2), dtype=np.float32),
+            b=None
+        ),
         reload=0.0,
         t=0.0,
     )
@@ -314,7 +329,7 @@ def play(bot_0, bot_1, config):
 
     bot_0, bot_1 -- bots to play
 
-    config -- astro.Config
+    config -- astro.Config -- must not be "solo"
 
     returns -- (int or None, [astro.State]) --
                winner: 0 if bot_0 won, 1 if bot_1 won, None if a draw

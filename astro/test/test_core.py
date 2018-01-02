@@ -1,12 +1,10 @@
-from ..core import (
-    _collisions, create, DEFAULT_CONFIG, step, swap_ships,
-    load_log, save_log,
-)
+from .. import core
+import itertools as it
 import numpy as np
 
 
 def test_collisions():
-    np.testing.assert_equal(_collisions(np.array(
+    np.testing.assert_equal(core._collisions(np.array(
         [[0, 0],
          [1.9, 1.9],
          [3.8, 1.9],
@@ -19,34 +17,41 @@ def test_collisions():
     ])
 
 
-def _check_shape(bodies, n, no_b=False):
-    assert bodies.x.shape == (n, 2)
-    assert bodies.dx.shape == (n, 2)
-    if no_b:
-        assert bodies.b is None
-    else:
-        assert bodies.b.shape == (n,)
+def _check_state(state, config):
+    assert state.ships.x.shape == (1 if config.solo else 2, 2)
+    assert state.ships.dx.shape == state.ships.x.shape
+    assert state.ships.b.shape == state.ships.x.shape[:1]
 
+    assert 1 <= state.planets.x.shape[0] <= config.max_planets
+    assert state.planets.dx.shape == state.planets.x.shape
+    assert state.planets.b is None
 
-def _check_state(state):
-    _check_shape(state.ships, 2)
-    _check_shape(state.planets, 2, no_b=True)
-    _check_shape(state.bullets, 0, no_b=True)
+    assert state.bullets.dx.shape == state.bullets.x.shape
+    assert state.bullets.b is None
 
 
 def test_create_step_swap_roundtrip():
-    state_0 = create(DEFAULT_CONFIG._replace(max_planets=2))
-    _check_state(state_0)
+    for base in [core.DEFAULT_CONFIG,
+                 core.SOLO_CONFIG,
+                 core.SOLO_EASY_CONFIG]:
+        for config in it.islice(core.generate_configs(base), 10):
+            # create
+            state_0 = core.create(config)
+            _check_state(state_0, config)
 
-    state_1, reward = step(state_0, np.array([2, 2]), DEFAULT_CONFIG)
-    _check_state(state_1)
-    np.testing.assert_allclose(reward, 0)
+            # step
+            control = np.full([1 if config.solo else 2], 2)
+            state_1, reward = core.step(state_0, control, config)
+            _check_state(state_1, config)
+            np.testing.assert_allclose(reward, 0)
 
-    _check_state(swap_ships(state_1))
+            # other methods
+            if not config.solo:
+                _check_state(core.swap_ships(state_1), config)
 
-    # roundtrip via file
-    save_log('/tmp/astro.test.log', DEFAULT_CONFIG, [state_0, state_1])
-    re_config, re_states = load_log('/tmp/astro.test.log')
-    np.testing.assert_equal(re_config, DEFAULT_CONFIG)
-    assert len(re_states) == 2
-    np.testing.assert_equal(re_states, [state_0, state_1])
+            # roundtrip via file
+            core.save_log('/tmp/astro.test.log', config, [state_0, state_1])
+            re_config, re_states = core.load_log('/tmp/astro.test.log')
+            np.testing.assert_equal(re_config, config)
+            assert len(re_states) == 2
+            np.testing.assert_equal(re_states, [state_0, state_1])
