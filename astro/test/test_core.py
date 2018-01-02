@@ -1,51 +1,8 @@
 from ..core import (
-    _direction, _bearing, _mag, _norm, _norm_angle,
-    _wrap_unit_square, _collisions,
-    find_better, create, DEFAULT_CONFIG, step, swap_ships,
+    _collisions, create, DEFAULT_CONFIG, step, swap_ships,
     load_log, save_log,
 )
-import itertools as it
 import numpy as np
-
-
-def test_direction():
-    np.testing.assert_allclose(_direction(0), [0, 1], atol=1e-7)
-    np.testing.assert_allclose(
-        _direction(np.arange(0, 2 * np.pi, np.pi/2)),
-        [[0, 1],
-         [1, 0],
-         [0, -1],
-         [-1, 0]], atol=1e-7)
-
-
-def test_bearing():
-    np.testing.assert_allclose(_bearing(np.array([0, 1])), 0, atol=1e-7)
-    np.testing.assert_allclose(
-        _bearing(np.array([
-            [0, 1],
-            [1, 0],
-            [0, -1],
-            [-1, 0]])),
-        [0, np.pi / 2, np.pi, -np.pi / 2])
-
-
-def test_mag_norm_angle():
-    np.testing.assert_allclose(_mag(np.array([3, 4])), 5)
-    np.testing.assert_allclose(_norm(np.array([3, 4])), [0.6, 0.8])
-    np.testing.assert_allclose(_norm_angle(2 * np.pi + 0.5), 0.5)
-    np.testing.assert_allclose(_norm_angle(-4 * np.pi - 0.5), -0.5)
-
-
-def test_wrap_unit_square():
-    np.testing.assert_allclose(
-        _wrap_unit_square(np.array([
-            [1.01, -0.95],
-            [0.95, -1.01],
-        ])),
-        np.array([
-            [-0.99, -0.95],
-            [0.95, 0.99]
-        ]))
 
 
 def test_collisions():
@@ -60,13 +17,6 @@ def test_collisions():
         True,
         True,
     ])
-
-
-def test_find_better():
-    assert find_better(it.repeat(0), max_trials=100, threshold=0.99) == 0
-    assert find_better(it.repeat(1), max_trials=100, threshold=0.99) == 1
-    assert find_better(
-        it.cycle([0, 1]), max_trials=1000, threshold=0.99) is None
 
 
 def _check_shape(bodies, n, no_b=False):
