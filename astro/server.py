@@ -1,5 +1,5 @@
+from . import core as astro
 import flask
-import astro
 import uuid
 import lru
 import numpy as np
