@@ -137,11 +137,8 @@ var renderer = (new function() {
                     }
                     if (data && data.q) {
                         var q = data.q[control];
-                        var x = 0.5 * (q + 1);
-                        var color = 0xff0000 +
-                            ((x * 0xff00) & 0xff00) +
-                            ((x * 0xff) & 0xff);
-                        $(a).css('background-color', '#' + color.toString(16))
+                        var g = Math.max(0, q * 0xff) & 0xff;
+                        $(a).css('background-color', 'rgb('+r+','+g+',0)');
                     }
                 });
             }
