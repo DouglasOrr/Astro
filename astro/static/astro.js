@@ -122,8 +122,28 @@ var renderer = (new function() {
     this.redraw = function() {
         if (this._frame !== null) {
             var tick = this._frame.tick;
-            if (tick.state !== null) {
+            if (tick.state) {
                 _render(this._frame.config, tick.state);
+            }
+            if (tick.control) {
+                var data = tick.bot_data[0];
+                var bot_control = tick.control[0];
+                $('.arrow').each(function (i, a) {
+                    var control = parseInt(a.getAttribute('data-control'));
+                    if (control === bot_control) {
+                        $(a).addClass('arrow-active');
+                    } else {
+                        $(a).removeClass('arrow-active');
+                    }
+                    if (data && data.q) {
+                        var q = data.q[control];
+                        var x = 0.5 * (q + 1);
+                        var color = 0xff0000 +
+                            ((x * 0xff00) & 0xff00) +
+                            ((x * 0xff) & 0xff);
+                        $(a).css('background-color', '#' + color.toString(16))
+                    }
+                });
             }
             if (this._frame.finished) {
                 var outcome = $('<div class="alert display-1">');
