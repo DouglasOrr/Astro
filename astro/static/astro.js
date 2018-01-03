@@ -201,17 +201,22 @@ var game = (new function() {
 
         renderer.draw(config, {"state": state}, false);
         var self = this;
+        var last_state = null;
         function tick() {
             var query = '/game/tick?' + $.param({"id": id, "control": controller.control});
             $.post(query, null, function (data) {
                 var data = _load_json(data);
-                if (self._current_game !== id) {
-                    return; // avoid double-play
-                }
-                // "Pretend" data is a real tick - only acts a little like one
-                renderer.draw(config, data, data.state === null);
-                if (data.state !== null) {
-                    self._timeout = window.setTimeout(tick, config.dt * 1000);
+                // avoid double-play
+                if (self._current_game === id) {
+                    // "Pretend" data is a real tick - only acts a little like one
+                    var finished = (data.state === null);
+                    if (finished) {
+                        data.state = last_state;
+                    } else {
+                        last_state = data.state;
+                        self._timeout = window.setTimeout(tick, config.dt * 1000);
+                    }
+                    renderer.draw(config, data, finished);
                 }
             });
         }
