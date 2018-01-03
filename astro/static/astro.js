@@ -98,28 +98,20 @@ function _load_json(obj) {
     }
 }
 
-var replay_player = (new function() {
-    this._interval = null,
-    this.play = function (game) {
-        window.clearInterval(this._interval);
-        var frame = -1;
-        this._interval = window.setInterval(function () {
-            if (++frame < game.ticks.length) {
-                var tick = game.ticks[frame];
-                if (tick !== null) {
-                    _render(game.config, tick.state);
-                }
-            } else {
-                window.clearInterval(this._interval);
-            }
-        }, game.config.dt * 1000);
-    }
-}());
-
 var replay = (new function() {
+    this._interval = null,
     this.game = null,
     this.restart = function () {
-        replay_player.play(this.game);
+        window.clearInterval(this._interval);
+        var self = this;
+        var frame = -1;
+        this._interval = window.setInterval(function () {
+            if (++frame < self.game.ticks.length) {
+                _render(self.game.config, self.game.ticks[frame].state);
+            } else {
+                window.clearInterval(self._interval);
+            }
+        }, this.game.config.dt * 1000);
     }
 }());
 
@@ -152,10 +144,18 @@ var controller = (new function() {
     }
 }());
 
-var player = (new function() {
+var game = (new function() {
     this._timeout = null,
     this._current_game = null,
-    this.play = function (id, config, state) {
+    this.bot = null,
+    this.restart = function() {
+        var query = '/game/start?' + $.param({"bot": this.bot});
+        var self = this;
+        $.post(query, null, function (data) {
+            self._play(data.id, _load_json(data.config), _load_json(data.state));
+        });
+    },
+    this._play = function (id, config, state) {
         window.clearTimeout(this._timeout);
         this._current_game = id;
         $('.game-outcome').empty();
@@ -186,16 +186,6 @@ var player = (new function() {
             });
         }
         this._timeout = window.setTimeout(tick, config.dt * 1000);
-    }
-}());
-
-var game = (new function() {
-    this.bot = null,
-    this.restart = function() {
-        var query = '/game/start?' + $.param({"bot": this.bot})
-        $.post(query, null, function (data) {
-            player.play(data.id, _load_json(data.config), _load_json(data.state));
-        });
     }
 }());
 
