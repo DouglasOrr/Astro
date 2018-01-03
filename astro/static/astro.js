@@ -78,22 +78,56 @@ function _render(config, state) {
 
 // -------------------- Control & utility --------------------
 
-function _load_json(obj) {
-    if (obj === null) {
-        return null;
-    }
-    var keys = Object.keys(obj);
-    if (keys.length) {
-        if (keys.indexOf('_shape') !== -1) {
-            return obj._values;
-        } else {
-            delete obj._type;
-            Object.keys(obj).forEach(function (k) {
-                obj[k] = _load_json(obj[k]);
-            });
-            return obj;
+var renderer = (new function() {
+    this._frame = null,
+    this.redraw = function() {
+        if (this._frame !== null) {
+            var tick = this._frame.tick;
+            if (tick.state !== null) {
+                _render(this._frame.config, tick.state);
+            }
+            if (this._frame.finished) {
+                var outcome = $('<div class="alert display-1">');
+                if (tick.reward[0] < 0) {
+                    outcome.addClass('alert-danger').append('You lose 😢');
+                } else if (0 < tick.reward[0]) {
+                    outcome.addClass('alert-success').append('You win ☺️');
+                } else {
+                    outcome.addClass('alert-warning').append("It's a draw 😐");
+                }
+                $('.game-outcome').empty().append(outcome);
+            } else {
+                $('.game-outcome').empty();
+            }
         }
+    },
+    this.draw = function(config, tick, finished) {
+        this._frame = {"config": config, "tick": tick, "finished": finished};
+        this.redraw();
+    }
+}());
+
+function _load_json(obj) {
+    // Primitives
+    if (obj === null ||
+        typeof(obj) === "string" ||
+        typeof(obj) === "number" ||
+        typeof(obj) === "boolean") {
+        return obj;
+    }
+    // Array
+    if ($.isArray(obj)) {
+        return obj.map(x => _load_json(x));
+    }
+    // Object, Numpy array
+    var keys = Object.keys(obj);
+    if (keys.indexOf('_shape') !== -1) {
+        return obj._values;
     } else {
+        delete obj._type;
+        Object.keys(obj).forEach(function (k) {
+            obj[k] = _load_json(obj[k]);
+        });
         return obj;
     }
 }
@@ -107,7 +141,11 @@ var replay = (new function() {
         var frame = -1;
         this._interval = window.setInterval(function () {
             if (++frame < self.game.ticks.length) {
-                _render(self.game.config, self.game.ticks[frame].state);
+                renderer.draw(
+                    self.game.config,
+                    self.game.ticks[frame],
+                    self.game.ticks.length - 1 <= frame
+                );
             } else {
                 window.clearInterval(self._interval);
             }
@@ -145,42 +183,34 @@ var controller = (new function() {
 }());
 
 var game = (new function() {
-    this._timeout = null,
-    this._current_game = null,
     this.bot = null,
     this.restart = function() {
         var query = '/game/start?' + $.param({"bot": this.bot});
         var self = this;
         $.post(query, null, function (data) {
-            self._play(data.id, _load_json(data.config), _load_json(data.state));
+            var data = _load_json(data);
+            self._play(data.id, data.config, data.state);
         });
     },
+    this._timeout = null,
+    this._current_game = null,
     this._play = function (id, config, state) {
         window.clearTimeout(this._timeout);
         this._current_game = id;
         $('.game-outcome').empty();
 
-        _render(config, state);
+        renderer.draw(config, {"state": state}, false);
         var self = this;
         function tick() {
             var query = '/game/tick?' + $.param({"id": id, "control": controller.control});
             $.post(query, null, function (data) {
+                var data = _load_json(data);
                 if (self._current_game !== id) {
                     return; // avoid double-play
                 }
-                if (data.state === null) {
-                    var reward = _load_json(data.reward);
-                    var outcome = $('<div class="alert display-1">');
-                    if (reward[0] < reward[1]) {
-                        outcome.addClass('alert-danger').append('You lose 😢');
-                    } else if (reward[1] < reward[0]) {
-                        outcome.addClass('alert-success').append('You win ☺️');
-                    } else {
-                        outcome.addClass('alert-warning').append("It's a draw 😐");
-                    }
-                    $('.game-outcome').empty().append(outcome);
-                } else {
-                    _render(config, _load_json(data.state));
+                // "Pretend" data is a real tick - only acts a little like one
+                renderer.draw(config, data, data.state === null);
+                if (data.state !== null) {
                     self._timeout = window.setTimeout(tick, config.dt * 1000);
                 }
             });
@@ -202,6 +232,7 @@ function _resize_canvas() {
 	.css('top', (window.innerHeight - size) / 2 + "px")
 	.attr('width', size)
 	.attr('height', size);
+    renderer.redraw();
 }
 
 $(function() {

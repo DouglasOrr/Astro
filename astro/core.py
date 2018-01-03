@@ -355,6 +355,24 @@ class Bot:
         pass
 
 
+class Bots:
+    @staticmethod
+    def control(bots, state):
+        return np.array([bot(roll_ships(state, index))
+                         for index, bot in enumerate(bots)])
+
+    @staticmethod
+    def reward(bots, state, reward):
+        for index, bot in enumerate(bots):
+            if hasattr(bot, 'reward'):
+                bot.reward(roll_ships(state, index), reward[index])
+
+    @staticmethod
+    def data(bots):
+        return [bot.data if hasattr(bot, 'data') else None
+                for bot in bots]
+
+
 def play(config, bots):
     '''Play out the game between bot_0 & bot_1.
 
@@ -368,25 +386,21 @@ def play(config, bots):
     state = create(config)
     while True:
         # 1. Gather input & record state
-        control = np.array([bot(roll_ships(state, index))
-                            for index, bot in enumerate(bots)])
+        control = Bots.control(bots, state)
 
         # 2. Advance the game physics
         old_state = state
         state, reward = step(state, control, config)
 
         # 3. Provide rewards
-        for index, bot in enumerate(bots):
-            if hasattr(bot, 'reward'):
-                bot.reward(roll_ships(state, index), reward[index])
+        Bots.reward(bots, state, reward)
 
         # 4. Save game ticks & handle end-of-game
         ticks.append(Tick(
             state=old_state,
             control=control,
             reward=reward,
-            bot_data=[bot.data if hasattr(bot, 'data') else None
-                      for bot in bots]))
+            bot_data=Bots.data(bots)))
         if state is None:
             return Game(
                 config=config,

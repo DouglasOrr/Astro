@@ -43,15 +43,13 @@ def game_start():
 def game_tick():
     game = GAMES[flask.request.args['id']]
     player_control = int(flask.request.args['control'])
-    bot_control = game['bot'](core.roll_ships(game['state'], 1))
-    game['state'], reward = core.step(
-        game['state'],
-        np.array([player_control, bot_control]),
-        game['config'])
-    return flask.jsonify(dict(
+    bots = [lambda _: player_control, game['bot']]
+    control = core.Bots.control(bots, game['state'])
+    game['state'], reward = core.step(game['state'], control, game['config'])
+    return flask.jsonify(util.to_jsonable(dict(
         id=game['id'],
-        state=util.to_jsonable(game['state']),
-        reward=util.to_jsonable(reward)))
+        reward=reward,
+        state=game['state'])))
 
 
 # Views
