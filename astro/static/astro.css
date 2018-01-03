@@ -2,7 +2,12 @@
     position: absolute;
 }
 .sidebar {
-    width: 10em;
+    width: 15em;
+    text-align: center;
+}
+.replayer-seek {
+    width: 100%;
+    margin-top: 1em;
 }
 .centered {
     position: fixed;

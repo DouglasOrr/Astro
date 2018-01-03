@@ -40,13 +40,23 @@
 
   <div class="container-fluid">
     <div class="row">
+
       <div class="col-sm-auto sidebar">
+        <input type="range" class="replayer-seek" value="0">
+        <div class="btn-group replayer-controls">
+          <button class="btn replayer-start">&#x23ea;</button>
+          <button class="btn replayer-play">&#x23f5;</button>
+          <button class="btn replayer-pause">&#x23f8;</button>
+          <button class="btn replayer-restart">&#x21bb;</button>
+          <button class="btn replayer-end">&#x23e9;</button>
+        </div>
       </div>
+
       <div class="col-sm main-canvas-holder">
         <canvas class="main-canvas"></canvas>
         <div class="game-outcome centered"></div>
       </div>
+
     </div>
   </div>
-
 </body>

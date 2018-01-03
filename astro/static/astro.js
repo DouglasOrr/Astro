@@ -76,6 +76,45 @@ function _render(config, state) {
     _draw_bullets(ctx, config, state.bullets);
 }
 
+// -------------------- Utility --------------------
+
+
+function _load_json(obj) {
+    // Primitives
+    if (obj === null ||
+        typeof(obj) === "string" ||
+        typeof(obj) === "number" ||
+        typeof(obj) === "boolean") {
+        return obj;
+    }
+    // Array
+    if ($.isArray(obj)) {
+        return obj.map(x => _load_json(x));
+    }
+    // Object, Numpy array
+    var keys = Object.keys(obj);
+    if (keys.indexOf('_shape') !== -1) {
+        return obj._values;
+    } else {
+        delete obj._type;
+        Object.keys(obj).forEach(function (k) {
+            obj[k] = _load_json(obj[k]);
+        });
+        return obj;
+    }
+}
+
+function _load_game(s) {
+    var lines = s.trim().split('\n');
+    var game = _load_json(JSON.parse(lines.shift()));
+    game.ticks = lines.map(x => _load_json(JSON.parse(x)));
+    return game;
+}
+
+function _set_visible(e, visible) {
+    e.css('display', visible ? 'initial' : 'none');
+}
+
 // -------------------- Control & utility --------------------
 
 var renderer = (new function() {
@@ -107,56 +146,6 @@ var renderer = (new function() {
     }
 }());
 
-function _load_json(obj) {
-    // Primitives
-    if (obj === null ||
-        typeof(obj) === "string" ||
-        typeof(obj) === "number" ||
-        typeof(obj) === "boolean") {
-        return obj;
-    }
-    // Array
-    if ($.isArray(obj)) {
-        return obj.map(x => _load_json(x));
-    }
-    // Object, Numpy array
-    var keys = Object.keys(obj);
-    if (keys.indexOf('_shape') !== -1) {
-        return obj._values;
-    } else {
-        delete obj._type;
-        Object.keys(obj).forEach(function (k) {
-            obj[k] = _load_json(obj[k]);
-        });
-        return obj;
-    }
-}
-
-var replay = (new function() {
-    this._interval = null,
-    this.game = null,
-    this.stop = function () {
-        window.clearInterval(this._interval);
-        this._interval = null;
-    },
-    this.restart = function () {
-        this.stop();
-        var self = this;
-        var frame = -1;
-        this._interval = window.setInterval(function () {
-            if (++frame < self.game.ticks.length) {
-                renderer.draw(
-                    self.game.config,
-                    self.game.ticks[frame],
-                    self.game.ticks.length - 1 <= frame
-                );
-            } else {
-                self.stop();
-            }
-        }, this.game.config.dt * 1000);
-    }
-}());
-
 var controller = (new function() {
     this.control = 2,
     this._up = false,
@@ -172,24 +161,91 @@ var controller = (new function() {
     }
 }());
 
-var game = (new function() {
-    this.bot = null,
-    this.stop = function() {
+var replayer = (new function() {
+    this.setup = function (game) {
+        this._game = game;
+        $('.replayer-seek').attr('max', this._game.ticks.length - 1);
+        return this;
+    },
+    this.restart = function () {
+        return this.seek(0).play();
+    },
+    this.pause = function () {
+        window.clearInterval(this._interval);
+        this._interval = null;
+        this._update_buttons();
+        return this;
+    },
+    this.seek = function (frame) {
+        if (frame < 0) {
+            frame += this._game.ticks.length;
+        }
+        this._frame = frame;
+        this._redraw();
+        this._update_buttons();
+        return this;
+    },
+    this.play = function () {
+        var self = this;
+        this._redraw();
+        window.clearInterval(this._interval);
+        this._interval = window.setInterval(function () {
+            ++self._frame;
+            self._redraw();
+            if (self._finished()) {
+                self.pause();
+            }
+        }, this._game.config.dt * 1000);
+        this._update_buttons();
+        return this;
+    },
+    this._finished = function () {
+        return this._frame == this._game.ticks.length - 1;
+    },
+    this._update_buttons = function () {
+        var playing = (this._interval !== null);
+        var finished = this._finished();
+        _set_visible($('.replayer-pause'), playing);
+        _set_visible($('.replayer-play'), !playing && !finished);
+        _set_visible($('.replayer-restart'), !playing && finished);
+    },
+    this._redraw = function() {
+        $('.replayer-seek').val(this._frame);
+        renderer.draw(
+            this._game.config,
+            this._game.ticks[this._frame],
+            this._finished()
+        );
+    }
+    this._frame = 0,
+    this._interval = null,
+    this._game = null
+}());
+
+var player = (new function() {
+    this.setup = function (bot) {
+        this._bot = bot;
+        return this;
+    },
+    this.pause = function() {
         this._current_game = null;
         window.clearTimeout(this._timeout);
+        return this;
     },
     this.restart = function() {
-        var query = '/game/start?' + $.param({"bot": this.bot});
+        var query = '/game/start?' + $.param({"bot": this._bot});
         var self = this;
         $.post(query, null, function (data) {
             var data = _load_json(data);
             self._play(data.id, data.config, data.state);
         });
+        return this;
     },
+    this._bot = null,
     this._timeout = null,
     this._current_game = null,
     this._play = function (id, config, state) {
-        this.stop();
+        this.pause();
         this._current_game = id;
         renderer.draw(config, {"state": state}, false);
         var self = this;
@@ -216,6 +272,8 @@ var game = (new function() {
     }
 }());
 
+// -------------------- Wiring things up --------------------
+
 function _resize_canvas() {
     var width = $('.main-canvas-holder').innerWidth();
     var height = window.innerHeight - $('.main-canvas-holder').offset().top;
@@ -228,32 +286,26 @@ function _resize_canvas() {
     renderer.redraw();
 }
 
-var current = null;
+var current = {'restart': function() { },
+               'pause': function() { }};
 function _switch_to(player) {
-    if (current !== null) {
-        current.stop();
-    }
+    current.pause();
     current = player;
-}
-function _restart() {
-    if (current !== null) {
-        current.restart();
-    }
+    $('.sidebar').css('visibility', Object.is(current, replayer) ? 'visible' : 'hidden');
+    return current;
 }
 function _start_game(e) {
-    _switch_to(game);
-    game.bot = $(e.target).data('bot');
-    game.restart();
+    _switch_to(player)
+        .setup($(e.target).data('bot'))
+        .restart();
 }
 function _start_replay(e) {
     if (e.target.files.length) {
         var reader = new FileReader();
         reader.onload = function (e) {
-            _switch_to(replay);
-            var lines = e.target.result.trim().split('\n');
-            replay.game = _load_json(JSON.parse(lines.shift()));
-            replay.game.ticks = lines.map(x => _load_json(JSON.parse(x)));
-            replay.restart();
+            _switch_to(replayer)
+                .setup(_load_game(e.target.result))
+                .restart();
         };
         reader.readAsText(e.target.files[0]);
     }
@@ -267,8 +319,28 @@ $(function() {
     $(window).on('keyup keydown', null, controller, controller.keyevent);
     $(window).keypress(function (e) {
         if (e.key == "r") {
-            _restart();
+            current.restart();
         }
+    });
+
+    // Replayer control
+    $('.replayer-play').on('click', function (e) {
+	replayer.play();
+    });
+    $('.replayer-pause').on('click', function (e) {
+	replayer.pause();
+    });
+    $('.replayer-restart').on('click', function (e) {
+	replayer.seek(0).play();
+    });
+    $('.replayer-start').on('click', function (e) {
+	replayer.pause().seek(0);
+    });
+    $('.replayer-end').on('click', function (e) {
+	replayer.pause().seek(-1);
+    });
+    $('.replayer-seek').on('input', function (e) {
+	replayer.pause().seek(parseInt($(e.target).val()));
     });
 
     // Replay selector
