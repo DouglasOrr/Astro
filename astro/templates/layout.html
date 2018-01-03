@@ -9,18 +9,37 @@
   <script src="/static/astro.js"></script>
 </head>
 <body>
-  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">  <!-- navbar-light bg-faded -->
-    <button class="navbar-toggler navbar-toggler-right" type="button" data-toggle="collapse" data-target="#navbarNavDropdown" aria-controls="navbarNavDropdown" aria-expanded="false" aria-label="Toggle navigation">
+
+  <nav class="navbar navbar-expand-sm navbar-dark bg-dark">
+    <button class="navbar-toggler navbar-toggler-right" type="button"
+            data-toggle="collapse" data-target="#navbarNavDropdown"
+            aria-controls="navbarNavDropdown" aria-expanded="false"
+            aria-label="Toggle navigation">
       <span class="navbar-toggler-icon"></span>
     </button>
     <a class="navbar-brand" href="/">Astro</a>
     <div class="collapse navbar-collapse" id="navbarNavDropdown">
       <div class="navbar-nav">
-        <a class="nav-item nav-link" href="/player">Play</a>
-        <a class="nav-item nav-link" href="/replayer">Replays</a>
+        <form class="form-inline">
+          <input class="form-control mr-sm-2 replay-file" id="replay-file" type="file" hidden>
+          <label class="form-control btn-dark" for="replay-file">Replay</label>
+        </form>
+        <div class="nav-item dropdown active">
+          <a class="nav-link dropdown-toggle" href="#"
+             id="navbarPlayDropdownLink" data-toggle="dropdown"
+             aria-haspopup="true" aria-expanded="false">
+            Play
+          </a>
+          <div class="dropdown-menu bot-selector"
+               aria-labelledby="navbarPlayDropdownLink">
+          </div>
+        </div>
       </div>
     </div>
   </nav>
+
   <canvas class="main-canvas"></canvas>
-  {% block body %}{% endblock %}
+  <div class="game-outcome centered">
+  </div>
+
 </body>

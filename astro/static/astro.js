@@ -135,8 +135,12 @@ function _load_json(obj) {
 var replay = (new function() {
     this._interval = null,
     this.game = null,
-    this.restart = function () {
+    this.stop = function () {
         window.clearInterval(this._interval);
+        this._interval = null;
+    },
+    this.restart = function () {
+        this.stop();
         var self = this;
         var frame = -1;
         this._interval = window.setInterval(function () {
@@ -147,25 +151,11 @@ var replay = (new function() {
                     self.game.ticks.length - 1 <= frame
                 );
             } else {
-                window.clearInterval(self._interval);
+                self.stop();
             }
         }, this.game.config.dt * 1000);
     }
 }());
-
-function _select_replay(e) {
-    if (e.target.files.length) {
-        var reader = new FileReader();
-        reader.onload = function (e) {
-            var lines = e.target.result.trim().split('\n');
-            replay.game = _load_json(JSON.parse(lines.shift()));
-            replay.game.ticks = lines.map(x => _load_json(JSON.parse(x)));
-            replay.restart();
-        };
-        reader.readAsText(e.target.files[0]);
-        $(e.target).hide();
-    }
-}
 
 var controller = (new function() {
     this.control = 2,
@@ -184,6 +174,10 @@ var controller = (new function() {
 
 var game = (new function() {
     this.bot = null,
+    this.stop = function() {
+        this._current_game = null;
+        window.clearTimeout(this._timeout);
+    },
     this.restart = function() {
         var query = '/game/start?' + $.param({"bot": this.bot});
         var self = this;
@@ -195,10 +189,8 @@ var game = (new function() {
     this._timeout = null,
     this._current_game = null,
     this._play = function (id, config, state) {
-        window.clearTimeout(this._timeout);
+        this.stop();
         this._current_game = id;
-        $('.game-outcome').empty();
-
         renderer.draw(config, {"state": state}, false);
         var self = this;
         var last_state = null;
@@ -224,12 +216,6 @@ var game = (new function() {
     }
 }());
 
-function _start_game(e) {
-    game.bot = $(e.target).data('bot');
-    game.restart();
-    $('.bot-selector').hide();
-}
-
 function _resize_canvas() {
     var top_pad = $('nav').height() + 15;
     var size = Math.min(window.innerWidth, window.innerHeight - top_pad);
@@ -241,38 +227,78 @@ function _resize_canvas() {
     renderer.redraw();
 }
 
+var current = null;
+function _switch_to(player) {
+    if (current !== null) {
+        current.stop();
+    }
+    current = player;
+}
+function _restart() {
+    if (current !== null) {
+        current.restart();
+    }
+}
+function _start_game(e) {
+    _switch_to(game);
+    game.bot = $(e.target).data('bot');
+    game.restart();
+}
+function _start_replay(e) {
+    if (e.target.files.length) {
+        var reader = new FileReader();
+        reader.onload = function (e) {
+            _switch_to(replay);
+            var lines = e.target.result.trim().split('\n');
+            replay.game = _load_json(JSON.parse(lines.shift()));
+            replay.game.ticks = lines.map(x => _load_json(JSON.parse(x)));
+            replay.restart();
+        };
+        reader.readAsText(e.target.files[0]);
+    }
+}
+
 $(function() {
     _resize_canvas();
     $(window).resize(_resize_canvas);
+    $(window).on('keyup keydown', null, controller, controller.keyevent);
+    $('.replay-file').change(_start_replay).focus();
 
-    // Replayer only
-    if ($('.replay-file').length) {
-        $('.replay-file').change(_select_replay).focus();
-        $(window).keypress(function (e) {
-            if (e.key == "r") {
-                replay.restart();
-            }
-        });
-    }
+    // Load bot selector
+    $.get('/bots', {}, function (data) {
+        $('.bot-selector')
+            .empty()
+            .append(data.bots.map(
+                x => $('<button class="dropdown-item">')
+                    .append(x)
+                    .data('bot', x)
+                    .click(_start_game)
+            ));
+    });
+
+    $(window).keypress(function (e) {
+        if (e.key == "r") {
+            _restart();
+        }
+    });
 
     // Player only
-    if ($('.bot-selector').length) {
-        $(window).on('keyup keydown', null, controller, controller.keyevent);
-        $(window).keypress(function (e) {
-            if (e.key == "r") {
-                game.restart();
-            }
-        });
-        $.get('/bots', {}, function (data) {
-            $('.bot-selector')
-                .empty()
-                .append('<span class="lead">Choose an opponent...</span>')
-                .append(data.bots.map(
-                    x => $('<button class="btn btn-lg btn-outline-primary">')
-                        .append(x)
-                        .data('bot', x)
-                        .click(_start_game)
-                ));
-        });
-    }
+    // if ($('.bot-selector').length) {
+    //     $(window).keypress(function (e) {
+    //         if (e.key == "r") {
+    //             game.restart();
+    //         }
+    //     });
+    //     $.get('/bots', {}, function (data) {
+    //         $('.bot-selector')
+    //             .empty()
+    //             .append('<span class="lead">Choose an opponent...</span>')
+    //             .append(data.bots.map(
+    //                 x => $('<button class="btn btn-lg btn-outline-primary">')
+    //                     .append(x)
+    //                     .data('bot', x)
+    //                     .click(_start_game)
+    //             ));
+    //     });
+    // }
 });
