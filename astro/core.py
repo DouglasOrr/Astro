@@ -41,7 +41,7 @@ Config = collections.namedtuple(
 
 Tick = collections.namedtuple(
     'Tick',
-    ('state', 'control', 'bot_data'))
+    ('state', 'control', 'reward', 'bot_data'))
 
 Game = collections.namedtuple(
     'Game',
@@ -370,20 +370,23 @@ def play(config, bots):
         # 1. Gather input & record state
         control = np.array([bot(roll_ships(state, index))
                             for index, bot in enumerate(bots)])
-        bot_data = [bot.data if hasattr(bot, 'data') else None
-                    for bot in bots]
-        ticks.append(Tick(
-            state=state,
-            control=control,
-            bot_data=bot_data))
 
         # 2. Advance the game physics
+        old_state = state
         state, reward = step(state, control, config)
 
-        # 3. Provide rewards & handle end-of-game
+        # 3. Provide rewards
         for index, bot in enumerate(bots):
             if hasattr(bot, 'reward'):
                 bot.reward(roll_ships(state, index), reward[index])
+
+        # 4. Save game ticks & handle end-of-game
+        ticks.append(Tick(
+            state=old_state,
+            control=control,
+            reward=reward,
+            bot_data=[bot.data if hasattr(bot, 'data') else None
+                      for bot in bots]))
         if state is None:
             return Game(
                 config=config,

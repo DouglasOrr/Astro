@@ -1,6 +1,8 @@
 import numpy as np
 import torch as T
-from . import util
+import itertools as it
+import sys
+from . import util, core
 
 
 class EpsilonGreedy:
@@ -83,12 +85,13 @@ class QNetwork(T.nn.Module):
         return T.tanh(self.q0(self.activation(self.q1(pool))))
 
 
-class QBot:
+class QBot(core.Bot):
     '''A basic "evaluation mode" Q-learning bot with no epsilon-greedy
     policy & no training.
     '''
     def __init__(self, network):
         self.network = network
+        self._last_q = None
 
     def q(self, state):
         return self.network(
@@ -97,7 +100,12 @@ class QBot:
                     self.network.get_features(state))))
 
     def __call__(self, state):
-        return np.argmax(self.q(state).data.numpy())
+        self._last_q = self.q(state).data.numpy()
+        return np.argmax(self._last_q)
+
+    @property
+    def data(self):
+        return dict(q=self._last_q)
 
 
 class QBotTrainer(QBot):
@@ -106,21 +114,20 @@ class QBotTrainer(QBot):
         self.greedy = EpsilonGreedy(t_in=1.0, t_out=0.1, seed=seed)
         self.n_steps = 10
         self.discount = 0.98
-        self.final_step_loss = []
         self._buffer = []
+        self._data = dict(step=None, greedy=False, q=None)
 
     def __call__(self, state):
         # Act according to an e-greedy policy or Q
         q = self.q(state)
         greedy = self.greedy(state)
         action = (greedy if greedy is not None else np.argmax(q.data.numpy()))
-        # print('QBot[{:x}] -- {} -- {} -- {}'.format(
-        #     id(self) % 256, action, greedy is not None, q.data.numpy()))
         self._buffer.append(q[action])
+        self._data['greedy'] = greedy is not None
+        self._data['q'] = q
         return action
 
     def reward(self, new_state, reward):
-        # print('QBot[{:x}] reward -- {}'.format(id(self) % 256, reward))
         if new_state is None or self.n_steps <= len(self._buffer):
             # we know there are only rewards for terminating states, in this
             # game, so no need to store any others
@@ -135,6 +142,63 @@ class QBotTrainer(QBot):
             self.network.opt.zero_grad()
             (e / self.n_steps).backward()
             self.network.opt.step()
-            if new_state is None:
-                self.final_step_loss.append(float(e.data) / len(self._buffer))
+            self._data['step'] = dict(loss=float(e.data), n=len(self._buffer))
             self._buffer.clear()
+        else:
+            self._data['step'] = None
+
+    @property
+    def data(self):
+        return self._data.copy()
+
+    @staticmethod
+    def average_step_loss(steps):
+        '''Compute the average (weighted) loss from a sequence of steps.
+        '''
+        loss, n = 0, 0
+        for step in steps:
+            if step is not None:
+                loss += step['loss']
+                n += step['n']
+        return loss / n
+
+
+def train(config, interval, limit, log_prefix=None):
+    network = QNetwork(solo=config.solo)
+    train_bots = [QBotTrainer(network, 10)
+                  for _ in range(1 if config.solo else 2)]
+    eval_bots = [QBot(network)
+                 for _ in range(1 if config.solo else 2)]
+
+    games = []
+    for n, config in it.islice(enumerate(core.generate_configs(config)),
+                               limit):
+        if 0 < n and n % interval == 0:
+            # Validate
+            valid_game = core.play(config, eval_bots)
+            if log_prefix is not None:
+                core.save_log(log_prefix + '.{}.log'.format(n), valid_game)
+
+            msg = 'N: {}'.format(n)
+            msg += '  Valid duration: {:.1f} s'.format(
+                valid_game.ticks[-1].state.t)
+            msg += '  Overall loss: {:.3g}'.format(
+                QBotTrainer.average_step_loss(
+                    data['step']
+                    for g in games
+                    for t in g.ticks
+                    for data in t.bot_data))
+            msg += '  Final loss: {:.3g}'.format(
+                QBotTrainer.average_step_loss(
+                    data['step']
+                    for g in games
+                    for data in g.ticks[-1].bot_data))
+            if config.solo:
+                msg += '  Survival: {:.1%}'.format(
+                    np.mean([g.winner is not None for g in games]))
+            sys.stderr.write(msg + '\n')
+
+            games = []
+
+        # Train
+        games.append(core.play(config, train_bots))

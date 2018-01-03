@@ -73,11 +73,13 @@ def test_play():
 
 
 def test_script():
-    for config in it.islice(core.generate_configs(core.SOLO_CONFIG), 3):
+    for config in it.islice(core.generate_configs(
+            core.SOLO_CONFIG._replace(max_time=20)), 3):
         game = core.play(config, [script.ScriptBot.create(config)])
         assert game.winner == 0
 
-    for config in it.islice(core.generate_configs(core.DEFAULT_CONFIG), 3):
+    for config in it.islice(core.generate_configs(
+            core.DEFAULT_CONFIG._replace(max_time=20)), 3):
         game = core.play(config, [
             script.NothingBot(), script.ScriptBot.create(config)])
         assert game.winner == 1
