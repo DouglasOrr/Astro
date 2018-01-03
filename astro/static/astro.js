@@ -68,7 +68,7 @@ function _render(config, state) {
     ctx.fillStyle = '#000';
     ctx.fill();
     ctx.lineWidth = 2 / scale;
-    ctx.strokeStyle = '#a44';
+    ctx.strokeStyle = '#888';
     ctx.stroke();
 
     _draw_planets(ctx, config, state.planets);
@@ -208,7 +208,6 @@ var game = (new function() {
                 var data = _load_json(data);
                 // avoid double-play
                 if (self._current_game === id) {
-                    // "Pretend" data is a real tick - only acts a little like one
                     var finished = (data.state === null);
                     if (finished) {
                         data.state = last_state;
@@ -216,6 +215,7 @@ var game = (new function() {
                         last_state = data.state;
                         self._timeout = window.setTimeout(tick, config.dt * 1000);
                     }
+                    // "Pretend" data is a real tick - it acts a bit like one (state & reward)
                     renderer.draw(config, data, finished);
                 }
             });
@@ -231,10 +231,11 @@ function _start_game(e) {
 }
 
 function _resize_canvas() {
-    var size = Math.min(window.innerWidth, window.innerHeight);
+    var top_pad = $('nav').height() + 15;
+    var size = Math.min(window.innerWidth, window.innerHeight - top_pad);
     $('.main-canvas')
 	.css('left', (window.innerWidth - size) / 2 + "px")
-	.css('top', (window.innerHeight - size) / 2 + "px")
+	.css('top', (top_pad + window.innerHeight - size) / 2 + "px")
 	.attr('width', size)
 	.attr('height', size);
     renderer.redraw();

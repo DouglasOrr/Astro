@@ -7,8 +7,20 @@
   <script src="/static/lib/popper.js"></script>
   <script src="/static/lib/bootstrap.js"></script>
   <script src="/static/astro.js"></script>
-  {% block head %}{% endblock %}
 </head>
 <body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">  <!-- navbar-light bg-faded -->
+    <button class="navbar-toggler navbar-toggler-right" type="button" data-toggle="collapse" data-target="#navbarNavDropdown" aria-controls="navbarNavDropdown" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <a class="navbar-brand" href="/">Astro</a>
+    <div class="collapse navbar-collapse" id="navbarNavDropdown">
+      <div class="navbar-nav">
+        <a class="nav-item nav-link" href="/player">Play</a>
+        <a class="nav-item nav-link" href="/replayer">Replays</a>
+      </div>
+    </div>
+  </nav>
+  <canvas class="main-canvas"></canvas>
   {% block body %}{% endblock %}
 </body>

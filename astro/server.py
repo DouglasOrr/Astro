@@ -56,7 +56,7 @@ def game_tick():
 
 @app.route('/')
 def index():
-    return flask.render_template('index.html')
+    return flask.redirect('/replayer')
 
 
 @app.route('/player')
