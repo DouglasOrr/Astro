@@ -217,11 +217,12 @@ var game = (new function() {
 }());
 
 function _resize_canvas() {
-    var top_pad = $('nav').height() + 15;
-    var size = Math.min(window.innerWidth, window.innerHeight - top_pad);
+    var width = $('.main-canvas-holder').innerWidth();
+    var height = window.innerHeight - $('.main-canvas-holder').offset().top;
+    var size = Math.min(width, height);
     $('.main-canvas')
-	.css('left', (window.innerWidth - size) / 2 + "px")
-	.css('top', (top_pad + window.innerHeight - size) / 2 + "px")
+	.css('left', (width - size) / 2 + "px")
+	.css('top', (height - size) / 2 + "px")
 	.attr('width', size)
 	.attr('height', size);
     renderer.redraw();
@@ -261,10 +262,19 @@ function _start_replay(e) {
 $(function() {
     _resize_canvas();
     $(window).resize(_resize_canvas);
+
+    // Keyboard control
     $(window).on('keyup keydown', null, controller, controller.keyevent);
+    $(window).keypress(function (e) {
+        if (e.key == "r") {
+            _restart();
+        }
+    });
+
+    // Replay selector
     $('.replay-file').change(_start_replay).focus();
 
-    // Load bot selector
+    // Bot selector
     $.get('/bots', {}, function (data) {
         $('.bot-selector')
             .empty()
@@ -275,30 +285,4 @@ $(function() {
                     .click(_start_game)
             ));
     });
-
-    $(window).keypress(function (e) {
-        if (e.key == "r") {
-            _restart();
-        }
-    });
-
-    // Player only
-    // if ($('.bot-selector').length) {
-    //     $(window).keypress(function (e) {
-    //         if (e.key == "r") {
-    //             game.restart();
-    //         }
-    //     });
-    //     $.get('/bots', {}, function (data) {
-    //         $('.bot-selector')
-    //             .empty()
-    //             .append('<span class="lead">Choose an opponent...</span>')
-    //             .append(data.bots.map(
-    //                 x => $('<button class="btn btn-lg btn-outline-primary">')
-    //                     .append(x)
-    //                     .data('bot', x)
-    //                     .click(_start_game)
-    //             ));
-    //     });
-    // }
 });

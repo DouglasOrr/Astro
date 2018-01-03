@@ -1,5 +1,8 @@
 .main-canvas {
-    position: fixed;
+    position: absolute;
+}
+.sidebar {
+    width: 10em;
 }
 .centered {
     position: fixed;
