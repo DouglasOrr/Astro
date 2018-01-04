@@ -14,16 +14,21 @@
 .arrow {
     width: 3em;
     height: 3em;
-    font-size: 1.3em;
+    font-size: 1.5em;
+    font-weight: 900;
     color: white;
+    background-color: black;
 }
 .arrow-diag {
     font-size: 1em;
     padding-top: 0.3em;
 }
 .arrow-active {
-    border: 0.2em solid red;
+    border: 0.2em solid blue;
     border-radius: 3em;
+}
+.debug-text {
+    text-align: left;
 }
 
 .main-canvas {

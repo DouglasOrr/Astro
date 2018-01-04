@@ -69,7 +69,7 @@ class QNetwork(T.nn.Module):
     def __init__(self, solo):
         super().__init__()
         nf, nq = (10 if solo else 15), 6
-        nh = 256
+        nh = 32
         self.activation = T.nn.functional.elu
         self.f0 = T.nn.Linear(nf, nh)
         self.f1 = T.nn.Linear(nh, nh)
@@ -77,7 +77,7 @@ class QNetwork(T.nn.Module):
         self.q1 = T.nn.Linear(nh, nh)
         self.q0 = T.nn.Linear(nh, nq)
 
-        self.opt = T.optim.Adam(self.parameters(), betas=(0.9, 0.99))
+        self.opt = T.optim.SGD(self.parameters(), lr=1e-6)
 
     def __call__(self, x):
         # return T.tanh(self.q0(self.pool(self.f0(x))))
@@ -112,7 +112,7 @@ class QBotTrainer(QBot):
     def __init__(self, network, seed):
         super().__init__(network)
         self.greedy = EpsilonGreedy(t_in=1.0, t_out=0.1, seed=seed)
-        self.n_steps = 10
+        self.n_steps = 8
         self.discount = 0.98
         self._buffer = []
         self._data = dict(step=None, greedy=False, q=None)
@@ -132,7 +132,7 @@ class QBotTrainer(QBot):
             # we know there are only rewards for terminating states, in this
             # game, so no need to store any others
             if new_state is None:
-                r = min(0, reward)  # TODO - DO NOT KEEP THIS
+                r = reward
             else:
                 r = self.discount * np.max(self.q(new_state).data.numpy())
             target = T.autograd.Variable(T.FloatTensor(
@@ -165,15 +165,15 @@ class QBotTrainer(QBot):
 
 def train(config, interval, limit, log_prefix=None):
     network = QNetwork(solo=config.solo)
-    train_bots = [QBotTrainer(network, 10)
-                  for _ in range(1 if config.solo else 2)]
+    train_bots = [QBotTrainer(network, n)
+                  for n in range(1 if config.solo else 2)]
     eval_bots = [QBot(network)
                  for _ in range(1 if config.solo else 2)]
 
     games = []
     for n, config in it.islice(enumerate(core.generate_configs(config)),
                                limit):
-        if 0 < n and n % interval == 0:
+        if n % interval == 0:
             # Validate
             valid_game = core.play(config, eval_bots)
             if log_prefix is not None:
@@ -182,20 +182,21 @@ def train(config, interval, limit, log_prefix=None):
             msg = 'N: {}'.format(n)
             msg += '  Valid duration: {:.1f} s'.format(
                 valid_game.ticks[-1].state.t)
-            msg += '  Overall loss: {:.3g}'.format(
-                QBotTrainer.average_step_loss(
-                    data['step']
-                    for g in games
-                    for t in g.ticks
-                    for data in t.bot_data))
-            msg += '  Final loss: {:.3g}'.format(
-                QBotTrainer.average_step_loss(
-                    data['step']
-                    for g in games
-                    for data in g.ticks[-1].bot_data))
-            if config.solo:
-                msg += '  Survival: {:.1%}'.format(
-                    np.mean([g.winner is not None for g in games]))
+            if n != 0:
+                msg += '  Overall loss: {:.3g}'.format(
+                    QBotTrainer.average_step_loss(
+                        data['step']
+                        for g in games
+                        for t in g.ticks
+                        for data in t.bot_data))
+                msg += '  Final loss: {:.3g}'.format(
+                    QBotTrainer.average_step_loss(
+                        data['step']
+                        for g in games
+                        for data in g.ticks[-1].bot_data))
+                if config.solo:
+                    msg += '  Survival: {:.1%}'.format(
+                        np.mean([g.winner is not None for g in games]))
             sys.stderr.write(msg + '\n')
 
             games = []

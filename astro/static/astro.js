@@ -137,10 +137,28 @@ var renderer = (new function() {
                     }
                     if (data && data.q) {
                         var q = data.q[control];
+                        var r = (Math.max(0, -q * 0xff) & 0xff) << 16;
                         var g = Math.max(0, q * 0xff) & 0xff;
                         $(a).css('background-color', 'rgb('+r+','+g+',0)');
                     }
                 });
+            }
+            if ($('#show-debug-text')[0].checked &&
+                tick.control && tick.reward && tick.bot_data) {
+                $('.debug-text')
+                    .empty()
+                    .append(JSON.stringify(
+                        {'control': tick.control[0],
+                         'reward': tick.reward[0],
+                         'bot_data': tick.bot_data[0]},
+                        function (key, value) {
+                            if (typeof value == 'number') {
+                                return parseFloat(value.toFixed(3));
+                            } else { return value; }
+                        },
+                        2));
+            } else {
+                $('.debug-text').empty();
             }
             if (this._frame.finished) {
                 var outcome = $('<div class="alert display-1">');
@@ -358,6 +376,9 @@ $(function() {
     });
     $('.replayer-seek').on('input', function (e) {
 	replayer.pause().seek(parseInt($(e.target).val()));
+    });
+    $('#show-debug-text').on('change', function (e) {
+        renderer.redraw();
     });
 
     // Replay selector
