@@ -2,6 +2,8 @@ import importlib
 import json
 import numpy as np
 import scipy.stats
+import cProfile
+import contextlib
 
 
 # to/from JSON
@@ -174,3 +176,15 @@ def find_better(games, max_trials, threshold):
                  threshold)):
                 # inconclusive - not enough trials left to reach confidence
                 return None
+
+
+@contextlib.contextmanager
+def profiling(filename):
+    '''Wrap some code in with_profile to start/stop cProfile, then dump the
+    results to the file.
+    '''
+    p = cProfile.Profile()
+    p.enable()
+    yield
+    p.disable()
+    p.dump_stats(filename)

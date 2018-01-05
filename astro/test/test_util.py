@@ -2,6 +2,7 @@ import json
 import collections
 import numpy as np
 import itertools as it
+import os
 from .. import util
 
 
@@ -91,3 +92,9 @@ def test_better():
     assert util.find_better(it.repeat(1), max_trials=100, threshold=0.99) == 1
     assert util.find_better(
         it.cycle([0, 1]), max_trials=1000, threshold=0.99) is None
+
+
+def test_profiling():
+    with util.profiling('/tmp/test_profiling.cprof'):
+        sum(range(10000))
+    assert os.path.isfile('/tmp/test_profiling.cprof')
