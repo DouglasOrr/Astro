@@ -353,8 +353,10 @@ $(function() {
     // Keyboard control
     $(window).on('keyup keydown', null, controller, controller.keyevent);
     $(window).keypress(function (e) {
-        if (e.key == "r") {
+        if (e.key == 'r') {
             current.restart();
+        } else if (e.key == 'o') {
+            $('.replay-file').click();
         }
     });
 
