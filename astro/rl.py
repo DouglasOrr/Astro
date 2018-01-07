@@ -67,6 +67,23 @@ class ValueNetwork(T.nn.Module):
 
         return features
 
+    @classmethod
+    def get_features_batch(cls, states):
+        '''As `get_features`, but for a batch of states.
+
+        states -- [astro.State] -- B states
+
+        returns -- array(B x N x D) -- batched feature array
+        '''
+        if any(state.ships.x.shape[0] != 1 or state.planets.x.shape[0] != 1
+               for state in states):
+            raise ValueError(
+                'get_features_batch only supports solo configurations'
+                ' with one planet, for now')
+        return np.stack(
+            [cls.get_features(state) for state in states],
+            axis=0)
+
     def __init__(self, solo, nout):
         super().__init__()
         nf = (10 if solo else 15)
@@ -97,6 +114,11 @@ class ValueNetwork(T.nn.Module):
         return self(T.autograd.Variable(
             T.FloatTensor(
                 self.get_features(state))))
+
+    def evaluate_batch(self, states):
+        return self(T.autograd.Variable(
+            T.FloatTensor(
+                self.get_features_batch(states))))
 
 
 class QBot(core.Bot):
