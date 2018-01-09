@@ -30,13 +30,15 @@ def _check_state(state, config):
     assert state.bullets.b is None
 
 
-def test_create_step_swap_roundtrip():
+def test_create_step_roll():
     for base in [core.DEFAULT_CONFIG,
                  core.SOLO_CONFIG,
                  core.SOLO_EASY_CONFIG]:
         for config in it.islice(core.generate_configs(base), 10):
             # create
             state_0 = core.create(config)
+            np.testing.assert_equal(state_0, core.create(config),
+                                    'create should be deterministic')
             _check_state(state_0, config)
 
             # step
@@ -50,12 +52,23 @@ def test_create_step_swap_roundtrip():
                 _check_state(core.roll_ships(state_1, 1), config)
 
 
-def test_play_solo():
-    for config in it.islice(core.generate_configs(core.SOLO_CONFIG), 3):
+def test_play_solo_easy():
+    for config in it.islice(core.generate_configs(core.SOLO_EASY_CONFIG), 3):
         # should always fall into a planet & lose
         game = core.play(config, [script.NothingBot()])
         assert game.config == config
         assert game.winner is None
+
+        # roundtrip via file
+        core.save_log('/tmp/astro.test.log', game)
+        np.testing.assert_equal(core.load_log('/tmp/astro.test.log'), game)
+
+
+def test_play_solo():
+    for config in it.islice(core.generate_configs(core.SOLO_CONFIG), 3):
+        # might not fall into the planet (e.g starting in the middle)
+        game = core.play(config, [script.NothingBot()])
+        assert game.config == config
 
         # roundtrip via file
         core.save_log('/tmp/astro.test.log', game)

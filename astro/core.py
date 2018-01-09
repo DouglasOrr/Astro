@@ -92,7 +92,7 @@ def create(config):
     outer = (config.outer_ship_position *
              np.sign(random.rand(2).astype(np.float32) - 0.5))
     inner = (config.inner_ship_position *
-             util.direction(2 * np.pi * np.random.rand()))
+             util.direction(2 * np.pi * random.rand()))
     if nplanets == 1 and config.solo:
         ships = outer[np.newaxis, ...]
     elif nplanets == 1:
