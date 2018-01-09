@@ -32,7 +32,14 @@ class ValueNetwork(T.nn.Module):
     '''Deep Q learning RL network for playing astro.
     '''
     @staticmethod
-    def get_features(state):
+    def get_features_shape(state):
+        return (
+            state.planets.x.shape[0] +
+            state.bullets.x.shape[0],
+            1 + 4 + 5 * state.ships.x.shape[0])
+
+    @classmethod
+    def get_features(cls, state):
         '''Create the feature vector from the current state.
         A little feature engineering here to make the model's job easier
         - concatenate the ships feature vector onto every other object.
@@ -49,21 +56,17 @@ class ValueNetwork(T.nn.Module):
                  (util.norm_angle(bodies.b[:, np.newaxis]) / np.pi,)),
                 axis=1)
 
-        nships = state.ships.x.shape[0]
-        nplanets = state.planets.x.shape[0]
-        nbullets = state.bullets.x.shape[0]
-
         # dim 0: [planets, bullets]
         # dim 1: [type, ships, object]
-        features = np.zeros(
-            (nplanets + nbullets, 1 + (5 * nships) + 4),
-            dtype=np.float32)
-        features[:nplanets, 0] = 1  # planet flag
-        features[nplanets:, 0] = -1  # bullet flag
-        robject = 1 + 5 * nships
-        features[:, 1:robject] = feature(state.ships).flatten()
-        features[:nplanets, robject:] = feature(state.planets)
-        features[nplanets:, robject:] = feature(state.bullets)
+        features = np.zeros(cls.get_features_shape(state),
+                            dtype=np.float32)
+        ibullets = state.planets.x.shape[0]
+        features[:ibullets, 0] = 0  # planet flag
+        features[ibullets:, 0] = 1  # bullet flag
+        iobject = 1 + 5 * state.ships.x.shape[0]
+        features[:, 1:iobject] = feature(state.ships).flatten()
+        features[:ibullets, iobject:] = feature(state.planets)
+        features[ibullets:, iobject:] = feature(state.bullets)
 
         return features
 
@@ -73,16 +76,47 @@ class ValueNetwork(T.nn.Module):
 
         states -- [astro.State] -- B states
 
-        returns -- array(B x N x D) -- batched feature array
+        returns -- array(B x N x D) -- batched feature array;
+                   note that result[:, :, 0] - which is the feature
+                   "object type" should be used as a mask - all features with
+                   (result[:, :, 0] < 0) should be skipped
         '''
-        if any(state.ships.x.shape[0] != 1 or state.planets.x.shape[0] != 1
-               for state in states):
+        shapes = [cls.get_features_shape(s) for s in states]
+        if any(s[1] != shapes[0][1] for s in shapes):
             raise ValueError(
-                'get_features_batch only supports solo configurations'
-                ' with one planet, for now')
-        return np.stack(
-            [cls.get_features(state) for state in states],
-            axis=0)
+                'Feature dimensions do not match - cannot mix solo & nonsolo'
+                ' games in a single batch')
+
+        # Use -1 to pad any remaining space at the end of each item
+        result = np.full((len(shapes),) + tuple(np.max(shapes, axis=0)),
+                         fill_value=-1, dtype=np.float32)
+        for b, state, (n, d) in zip(it.count(), states, shapes):
+            result[b, 0:n, :] = cls.get_features(state)
+        return result
+
+    @staticmethod
+    def masked_max(x, features):
+        '''Max-pooling over axis -2, with masking according to the
+        "object type" field (features[..., 0] < 0).
+
+        x -- Variable[B x N x X] -- processed features
+
+        features -- Variable[B x N x F] -- original feature values for masking
+
+        returns -- Variable[B x X] -- masked & pooled
+        '''
+        # Torch doesn't like np.inf here, so just use a large value
+        xm = x - 1e9 * (
+            features[..., 0] < 0)[..., np.newaxis].type(x.data.type())
+        return T.max(xm, -2)[0]
+
+    @staticmethod
+    def masked_sum(x, features):
+        '''As masked_max (but performs sum-pooling).
+        '''
+        # Torch doesn't like np.inf here, so just use a large value
+        xm = x * (0 <= features[..., 0])[..., np.newaxis].type(x.data.type())
+        return T.sum(xm, -2)
 
     def __init__(self, solo, nout):
         super().__init__()
@@ -91,7 +125,7 @@ class ValueNetwork(T.nn.Module):
         self.activation = T.nn.functional.softsign
         self.f0 = T.nn.Linear(nf, nh)
         self.f = T.nn.ModuleList([T.nn.Linear(nh, nh) for _ in range(d)])
-        self.pool = lambda x: T.max(x, -2)[0]
+        self.pool = self.masked_max
         self.v = T.nn.ModuleList([T.nn.Linear(nh, nh) for _ in range(d)])
         self.v0 = T.nn.Linear(nh, nout)
 
@@ -107,7 +141,7 @@ class ValueNetwork(T.nn.Module):
             self.f, self.f0(x))
         v = ft.reduce(
             lambda a, layer: self.activation(layer(a)),
-            self.v, self.pool(f))
+            self.v, self.pool(f, features=x))
         return T.tanh(self.v0(v))
 
     def evaluate(self, state):

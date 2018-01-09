@@ -4,6 +4,49 @@ import torch as T
 import itertools as it
 
 
+def vdiff(v1, v2):
+    '''Returns the cartesian distance between the values in two autograd Variables.
+    '''
+    return util.mag(v1.data.numpy() - v2.data.numpy())
+
+
+def test_execute():
+    T.manual_seed(123)
+    for base_config in [
+            core.DEFAULT_CONFIG,
+            core.SOLO_CONFIG,
+            core.SOLO_EASY_CONFIG
+    ]:
+        s1 = core.create(base_config)
+        s2 = core.create(base_config._replace(seed=2 * base_config.seed))
+        network = rl.ValueNetwork(base_config.solo, 6)
+        y1 = network.evaluate(s1)
+        y2 = network.evaluate(s2)
+        assert vdiff(y1, network.evaluate(s1)) < 1e-6, 'consistency'
+        assert 1e-6 < vdiff(y1, y2), 'difference'
+        assert vdiff(y1, network.evaluate_batch([s1])[0]) < 1e-6, '1-batch'
+        assert (vdiff(T.stack([y1, y2]), network.evaluate_batch([s1, s2]))
+                < 1e-6).all(), '2-batch'
+
+
+def test_execute_batch():
+    T.manual_seed(456)
+    network = rl.ValueNetwork(solo=False, nout=6)
+    s1 = core.create(core.DEFAULT_CONFIG)
+    s2 = s1._replace(bullets=core.Bodies(
+        x=np.array([[0.8, 0.6]], dtype=np.float32),
+        dx=np.array([[-0.4, -0.3]], dtype=np.float32),
+        b=None))
+    y1 = network.evaluate(s1)
+    y2 = network.evaluate(s2)
+    assert (vdiff(T.stack([y1, y2]), network.evaluate_batch([s1, s2]))
+            < 1e-6).all()
+    assert (vdiff(T.stack([y2, y1]), network.evaluate_batch([s2, s1]))
+            < 1e-6).all()
+
+
+# Some more advanced testing
+
 def change_to_crash(config, state, random):
     '''Change a single "solo easy" state to a "crash" state.'''
     assert state.ships.x.shape[0] == 1
