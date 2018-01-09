@@ -70,6 +70,33 @@ class ValueNetwork(T.nn.Module):
 
         return features
 
+    @staticmethod
+    def to_batch(features):
+        '''Put a list of features into a batch.
+
+        states -- [array(N_f x D)] -- B features (from `get_features`)
+
+        returns -- array(B x N x D) -- batched feature array;
+                   note that result[:, :, 0] - which is the feature
+                   "object type" should be used as a mask - all features with
+                   (result[:, :, 0] < 0) should be skipped
+        '''
+        if any(f.shape[1] != features[0].shape[1] for f in features):
+            raise ValueError(
+                'Feature dimensions do not match - cannot mix solo & nonsolo'
+                ' games in a single batch')
+
+        # Use -1 to pad any remaining space at the end of each item
+        result = np.full(
+            (len(features),
+             max(f.shape[0] for f in features),
+             features[0].shape[1]),
+            fill_value=-1,
+            dtype=np.float32)
+        for b, feature in zip(it.count(), features):
+            result[b, 0:feature.shape[0], :] = feature
+        return result
+
     @classmethod
     def get_features_batch(cls, states):
         '''As `get_features`, but for a batch of states.
@@ -81,18 +108,7 @@ class ValueNetwork(T.nn.Module):
                    "object type" should be used as a mask - all features with
                    (result[:, :, 0] < 0) should be skipped
         '''
-        shapes = [cls.get_features_shape(s) for s in states]
-        if any(s[1] != shapes[0][1] for s in shapes):
-            raise ValueError(
-                'Feature dimensions do not match - cannot mix solo & nonsolo'
-                ' games in a single batch')
-
-        # Use -1 to pad any remaining space at the end of each item
-        result = np.full((len(shapes),) + tuple(np.max(shapes, axis=0)),
-                         fill_value=-1, dtype=np.float32)
-        for b, state, (n, d) in zip(it.count(), states, shapes):
-            result[b, 0:n, :] = cls.get_features(state)
-        return result
+        return cls.to_batch([cls.get_features(s) for s in states])
 
     @staticmethod
     def masked_max(x, features):
@@ -176,7 +192,7 @@ class QBotTrainer(QBot):
     def __init__(self, network, seed):
         super().__init__(network)
         self.greedy = EpsilonGreedy(t_in=1.0, t_out=0.1, seed=seed)
-        self.n_steps = 100  # a bit high!
+        self.n_steps = 100
         self.discount = 0.98
         self._qbuffer = []
         self._data = dict(greedy=False, q=None)
@@ -191,26 +207,28 @@ class QBotTrainer(QBot):
         self._data['q'] = q.data.numpy()
         return action
 
+    def step(self, q, target):
+        e = ((target - q) ** 2).sum(0)
+        self.q.opt.zero_grad()
+        (e / self.n_steps).backward()
+        self.q.opt.step()
+        return dict(
+            loss=float(e.data),
+            n=target.shape[0])
+
     def reward(self, new_state, reward):
         if new_state is None or self.n_steps <= len(self._qbuffer):
             # we know there are only rewards for terminating states, in this
             # game, so no need to store any others
-            if new_state is None:
-                r = reward
-            else:
-                r = self.discount * np.max(
-                    self.q.evaluate(new_state).data.numpy())
+            discounted_reward = (
+                reward
+                if new_state is None else
+                self.discount * float(T.max(self.q.evaluate(new_state))))
             target = T.autograd.Variable(T.FloatTensor(
-                r * (self.discount ** np.arange(len(self._qbuffer)))))
-
+                discounted_reward * (
+                    self.discount ** np.arange(len(self._qbuffer)))))
             q = T.cat(self._qbuffer[::-1])
-            # w = 0.1 + 0.9 * T.abs(target)  # TODO: crude weighting
-            e = ((target - q) ** 2).sum(0)
-            self.q.opt.zero_grad()
-            (e / self.n_steps).backward()
-            self.q.opt.step()
-            self._data['step'] = dict(
-                loss=float(e.data), n=len(self._qbuffer))
+            self._data['step'] = self.step(q, target)
             self._qbuffer.clear()
         else:
             if 'step' in self._data:
