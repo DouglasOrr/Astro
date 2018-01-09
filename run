@@ -45,8 +45,11 @@ def run(command):
        COMMAND=' '.join(command))
 
 
-def test():
-    run(['pytest astro'])
+def test(test_filter):
+    run(['pytest astro' +
+         (' -k "{}"'.format(test_filter)
+          if test_filter is not None else
+          '')])
     run(['flake8'])
 
 
@@ -90,7 +93,9 @@ p = subs.add_parser('run')
 p.add_argument('command', nargs='*', default=[])
 p.set_defaults(action=run)
 
-subs.add_parser('test').set_defaults(action=test)
+p = subs.add_parser('test')
+p.add_argument('-k', '--test-filter', help='Pytest filter expression')
+p.set_defaults(action=test)
 
 subs.add_parser('notebook').set_defaults(action=notebook)
 
