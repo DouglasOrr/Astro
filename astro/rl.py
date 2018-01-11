@@ -3,6 +3,7 @@ import torch as T
 import itertools as it
 import functools as ft
 import sys
+import random
 from . import util, core
 
 
@@ -149,7 +150,7 @@ class ValueNetwork(T.nn.Module):
         # self.opt = T.optim.Rprop(self.parameters())
         # self.opt = T.optim.RMSprop(self.parameters())
         # self.opt = T.optim.Adagrad(self.parameters())
-        # self.opt = T.optim.SGD(self.parameters(), lr=1e-1)
+        # self.opt = T.optim.SGD(self.parameters(), lr=1e-2)
 
     def forward(self, x):
         f = ft.reduce(
@@ -192,44 +193,71 @@ class QBotTrainer(QBot):
     def __init__(self, network, seed):
         super().__init__(network)
         self.greedy = EpsilonGreedy(t_in=1.0, t_out=0.1, seed=seed)
-        self.n_steps = 100
+        self.n_steps = 10
         self.discount = 0.98
-        self._qbuffer = []
-        self._data = dict(greedy=False, q=None)
+        self.n_samples = 64
+        self._nstep_buffer = []
+        self._replay_buffer = []
+        self._data = dict(greedy=None, q=None)
+        self._random = random.Random(seed)
 
     def __call__(self, state):
         # Act according to an e-greedy policy or Q
-        q = self.q.evaluate(state)
+        f = self.q.get_features(state)
+        q = self.q(T.autograd.Variable(T.FloatTensor(f))).data.numpy()
         greedy = self.greedy(state)
-        action = (greedy if greedy is not None else np.argmax(q.data.numpy()))
-        self._qbuffer.append(q[action])
-        self._data['greedy'] = greedy is not None
-        self._data['q'] = q.data.numpy()
+        action = int(greedy if greedy is not None else np.argmax(q))
+        self._nstep_buffer.append((f, action))
+        self._data['greedy'] = greedy
+        self._data['q'] = q
         return action
 
-    def step(self, q, target):
-        e = ((target - q) ** 2).sum(0)
+    def _step(self):
+        '''Sample from the replay buffer, and take an optimization step.
+        '''
+        assert self.n_steps < self.n_samples
+        if len(self._replay_buffer) <= self.n_samples:
+            data = self._replay_buffer
+        else:
+            data = self._random.sample(
+                self._replay_buffer[:-self.n_steps],
+                self.n_samples - self.n_steps
+            ) + self._replay_buffer[-self.n_steps:]
+
+        inputs = T.autograd.Variable(T.FloatTensor(ValueNetwork.to_batch(
+            [f for f, _, _ in data])))
+        actions = T.autograd.Variable(T.LongTensor([a for _, a, _ in data]))
+        targets = T.autograd.Variable(T.FloatTensor([r for _, _, r in data]))
+
+        loss = ((targets -
+                 self.q(inputs).gather(1, actions.view(-1, 1))) ** 2).sum()
+
         self.q.opt.zero_grad()
-        (e / self.n_steps).backward()
+        (loss / targets.nelement()).backward()
         self.q.opt.step()
-        return dict(
-            loss=float(e.data),
-            n=target.shape[0])
+
+        return dict(loss=float(loss), n=targets.nelement())
 
     def reward(self, new_state, reward):
-        if new_state is None or self.n_steps <= len(self._qbuffer):
+        if new_state is None or self.n_steps <= len(self._nstep_buffer):
+            # Update the replay buffer with the new (state, action, reward)s
             # we know there are only rewards for terminating states, in this
             # game, so no need to store any others
             discounted_reward = (
                 reward
                 if new_state is None else
-                self.discount * float(T.max(self.q.evaluate(new_state))))
-            target = T.autograd.Variable(T.FloatTensor(
-                discounted_reward * (
-                    self.discount ** np.arange(len(self._qbuffer)))))
-            q = T.cat(self._qbuffer[::-1])
-            self._data['step'] = self.step(q, target)
-            self._qbuffer.clear()
+                0)
+            # TODO self.discount * float(T.max(self.q.evaluate(new_state))))
+            for n, (feature, action) in enumerate(self._nstep_buffer):
+                p = len(self._nstep_buffer) - 1 - n
+                r = discounted_reward * (self.discount ** p)
+                self._replay_buffer.append((feature, action, r))
+
+            # Sample (batch, target) from the replay buffer & take a step to
+            # reduce loss
+            self._data['step'] = self._step()
+
+            self._nstep_buffer.clear()
         else:
             if 'step' in self._data:
                 del self._data['step']
@@ -266,30 +294,31 @@ def train(config, interval, limit, log_prefix=None):
                 core.save_log(log_prefix + '.{}.log'.format(n), valid_game)
 
             msg = 'N: {}'.format(n)
-            msg += '  Valid duration: {:.1f} s'.format(
+            msg += '  VALID  t: {:.0f} s'.format(
                 valid_game.ticks[-1].state.t)
             if n != 0:
-                msg += '  Games: {}  Ticks: {}  Final ticks {}'.format(
-                    len(games),
+                msg += '  TRAIN  #t: {}  #s: {}'.format(
                     sum(len(g.ticks) for g in games),
-                    sum(data['step']['n']
+                    sum(1 if 'step' in data else 0
                         for g in games
-                        for data in g.ticks[-1].bot_data))
-                msg += '  Overall loss: {:.3g}'.format(
+                        for t in g.ticks
+                        for data in t.bot_data))
+                msg += '  L: {:.3g}  L_final: {:.3g}'.format(
                     QBotTrainer.average_step_loss(
                         data['step']
                         for g in games
                         for t in g.ticks
                         for data in t.bot_data
-                        if 'step' in data))
-                msg += '  Final loss: {:.3g}'.format(
+                        if 'step' in data),
                     QBotTrainer.average_step_loss(
                         data['step']
                         for g in games
                         for data in g.ticks[-1].bot_data
                         if 'step' in data))
+                msg += '  t: {:.0f} s'.format(
+                    np.median([g.ticks[-1].state.t for g in games]))
                 if config.solo:
-                    msg += '  Survival: {:.1%}'.format(
+                    msg += '  live: {:.0%}'.format(
                         np.mean([g.winner is not None for g in games]))
             sys.stderr.write(msg + '\n')
 
