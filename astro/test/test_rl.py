@@ -112,6 +112,7 @@ def test_convergence():
     random = np.random.RandomState(0)
     T.manual_seed(0)
     network = rl.ValueNetwork(solo=True, nout=1)
+    opt = T.optim.Adam(network.parameters(), lr=1e-2)
     valid, valid_y = gen_crash_states(
         core.SOLO_EASY_CONFIG, nvcrashes, nvsamples, random)
     valid_y = T.autograd.Variable(T.FloatTensor(valid_y))
@@ -133,9 +134,9 @@ def test_convergence():
                          0.5 / (y.size - crashes.sum()))))
         else:
             weights = 1. / y.size
-        network.opt.zero_grad()
+        opt.zero_grad()
         (losses * weights).sum(0).backward()
-        network.opt.step()
+        opt.step()
 
         if step % vinterval == 0:
             vlosses = ((network.evaluate_batch(valid).view(-1) - valid_y) ** 2)

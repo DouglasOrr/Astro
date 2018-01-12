@@ -3,7 +3,6 @@ import torch as T
 import itertools as it
 import functools as ft
 import sys
-import random
 from . import util, core
 
 
@@ -146,9 +145,9 @@ class ValueNetwork(T.nn.Module):
         self.v = T.nn.ModuleList([T.nn.Linear(nh, nh) for _ in range(d)])
         self.v0 = T.nn.Linear(nh, nout)
 
-        self.opt = T.optim.Adam(self.parameters(), lr=1e-2)
+        self.opt = T.optim.Adam(self.parameters(), lr=1e-3)
         # self.opt = T.optim.Rprop(self.parameters())
-        # self.opt = T.optim.RMSprop(self.parameters())
+        # self.opt = T.optim.RMSprop(self.parameters(), eps=1e-3)
         # self.opt = T.optim.Adagrad(self.parameters())
         # self.opt = T.optim.SGD(self.parameters(), lr=1e-2)
 
@@ -189,17 +188,28 @@ class QBot(core.Bot):
         return dict(q=self._last_q)
 
 
+class Experience:
+    __slots__ = ('feature', 'action', 'reward', 'loss')
+
+    def __init__(self, feature, action, reward):
+        self.feature = feature
+        self.action = action
+        self.reward = reward
+        self.loss = np.inf
+
+
 class QBotTrainer(QBot):
     def __init__(self, network, seed):
         super().__init__(network)
         self.greedy = EpsilonGreedy(t_in=1.0, t_out=0.1, seed=seed)
         self.n_steps = 10
-        self.discount = 0.98
+        self.discount = 0.99
         self.n_samples = 64
+        self.max_replay = 10000
         self._nstep_buffer = []
         self._replay_buffer = []
         self._data = dict(greedy=None, q=None)
-        self._random = random.Random(seed)
+        self._random = np.random.RandomState(seed)
 
     def __call__(self, state):
         # Act according to an e-greedy policy or Q
@@ -217,25 +227,33 @@ class QBotTrainer(QBot):
         '''
         assert self.n_steps < self.n_samples
         if len(self._replay_buffer) <= self.n_samples:
-            data = self._replay_buffer
+            xps = self._replay_buffer
         else:
-            data = self._random.sample(
-                self._replay_buffer[:-self.n_steps],
-                self.n_samples - self.n_steps
-            ) + self._replay_buffer[-self.n_steps:]
+            xps = self._replay_buffer[-self.n_steps:]
+            sbuf = self._replay_buffer[:-self.n_steps]
+            weights = np.array([d.loss for d in sbuf], dtype=np.float32)
+            weights /= weights.sum()
+            for i in self._random.choice(
+                    np.arange(len(sbuf)),
+                    size=self.n_samples - self.n_steps,
+                    replace=False,
+                    p=weights):
+                xps.append(sbuf[i])
 
         inputs = T.autograd.Variable(T.FloatTensor(ValueNetwork.to_batch(
-            [f for f, _, _ in data])))
-        actions = T.autograd.Variable(T.LongTensor([a for _, a, _ in data]))
-        targets = T.autograd.Variable(T.FloatTensor([r for _, _, r in data]))
+            [d.feature for d in xps])))
+        actions = T.autograd.Variable(T.LongTensor([d.action for d in xps]))
+        targets = T.autograd.Variable(T.FloatTensor([d.reward for d in xps]))
 
-        loss = ((targets -
-                 self.q(inputs).gather(1, actions.view(-1, 1))) ** 2).sum()
-
+        y = self.q(inputs).gather(1, actions.view(-1, 1)).view(-1)
+        losses = (targets - y) ** 2
+        loss = losses.sum()
         self.q.opt.zero_grad()
         (loss / targets.nelement()).backward()
         self.q.opt.step()
 
+        for l, xp in zip(losses, xps):
+            xp.loss = float(l)
         return dict(loss=float(loss), n=targets.nelement())
 
     def reward(self, new_state, reward):
@@ -246,15 +264,17 @@ class QBotTrainer(QBot):
             discounted_reward = (
                 reward
                 if new_state is None else
-                0)
-            # TODO self.discount * float(T.max(self.q.evaluate(new_state))))
+                self.discount * float(T.max(self.q.evaluate(new_state))))
             for n, (feature, action) in enumerate(self._nstep_buffer):
                 p = len(self._nstep_buffer) - 1 - n
                 r = discounted_reward * (self.discount ** p)
-                self._replay_buffer.append((feature, action, r))
+                self._replay_buffer.append(Experience(feature, action, r))
 
-            # Sample (batch, target) from the replay buffer & take a step to
-            # reduce loss
+            # If the replay buffer is too long, throw some of it away
+            if self.max_replay <= len(self._replay_buffer):
+                self._replay_buffer = self._replay_buffer[self.max_replay//2:]
+
+            # Sample from the replay buffer & take a step to reduce loss
             self._data['step'] = self._step()
 
             self._nstep_buffer.clear()
