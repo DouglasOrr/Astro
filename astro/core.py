@@ -4,6 +4,7 @@ learning.
 
 import numpy as np
 import collections
+import os
 from . import util
 
 
@@ -416,6 +417,9 @@ def save_log(path, game):
 
     game -- astro.Game
     '''
+    dir_ = os.path.dirname(path)
+    if not os.path.isdir(dir_):
+        os.makedirs(dir_)
     with open(path, 'w') as f:
         f.write(util.to_json(
             dict(config=game.config, winner=game.winner)) + '\n')
