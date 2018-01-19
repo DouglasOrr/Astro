@@ -130,14 +130,13 @@ class ValueNetwork(T.nn.Module):
     def masked_sum(x, features):
         '''As masked_max (but performs sum-pooling).
         '''
-        # Torch doesn't like np.inf here, so just use a large value
         xm = x * (0 <= features[..., 0])[..., np.newaxis].type(x.data.type())
         return T.sum(xm, -2)
 
     def __init__(self, solo, nout):
         super().__init__()
         nf = (10 if solo else 15)
-        nh, d = 32, 1
+        nh, d = 32, 2
         self.activation = T.nn.functional.softsign
         self.f0 = T.nn.Linear(nf, nh)
         self.f = T.nn.ModuleList([T.nn.Linear(nh, nh) for _ in range(d)])
@@ -145,11 +144,11 @@ class ValueNetwork(T.nn.Module):
         self.v = T.nn.ModuleList([T.nn.Linear(nh, nh) for _ in range(d)])
         self.v0 = T.nn.Linear(nh, nout)
 
-        self.opt = T.optim.Adam(self.parameters(), lr=1e-3)
+        # self.opt = T.optim.Adam(self.parameters(), lr=1e-3)
         # self.opt = T.optim.Rprop(self.parameters())
         # self.opt = T.optim.RMSprop(self.parameters(), eps=1e-3)
         # self.opt = T.optim.Adagrad(self.parameters())
-        # self.opt = T.optim.SGD(self.parameters(), lr=1e-2)
+        self.opt = T.optim.SGD(self.parameters(), lr=1e-2)
 
     def forward(self, x):
         f = ft.reduce(
@@ -204,8 +203,8 @@ class QBotTrainer(QBot):
         self.greedy = EpsilonGreedy(t_in=1.0, t_out=0.1, seed=seed)
         self.n_steps = 10
         self.discount = 0.99
-        self.n_samples = 64
-        self.max_replay = 10000
+        self.n_samples = 128
+        self.max_replay = 100000
         self._nstep_buffer = []
         self._replay_buffer = []
         self._data = dict(greedy=None, q=None)
