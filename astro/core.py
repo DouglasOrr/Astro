@@ -1,6 +1,6 @@
-'''Astro - simple tiny physics simulation for trying out reinforcement
+"""Astro - simple tiny physics simulation for trying out reinforcement
 learning.
-'''
+"""
 
 import numpy as np
 import collections
@@ -75,17 +75,17 @@ SOLO_EASY_CONFIG = SOLO_CONFIG._replace(max_planets=1)
 
 
 def generate_configs(config):
-    '''Generate an infinite sequence of differently seeded configurations from
+    """Generate an infinite sequence of differently seeded configurations from
     a single seed configuration.
-    '''
+    """
     random = np.random.RandomState(config.seed)
     while True:
         yield config._replace(seed=random.randint(1 << 30))
 
 
 def create(config):
-    '''Create a new game state randomly.
-    '''
+    """Create a new game state randomly.
+    """
     random = np.random.RandomState(config.seed)
     nplanets = random.randint(1, config.max_planets + 1)
 
@@ -136,7 +136,7 @@ def create(config):
 
 
 def _gravity(planets, x, config):
-    '''Compute the acceleration due to gravity of 'planets' on objects at position
+    """Compute the acceleration due to gravity of 'planets' on objects at position
     'x'.
 
     planets -- astro.Bodies -- only massive bodies
@@ -146,7 +146,7 @@ def _gravity(planets, x, config):
     config -- astro.Config -- constants
 
     returns -- array(N x 2) -- gravitational field (force per unit mass)
-    '''
+    """
     rx = planets.x[np.newaxis, :, :] - x[:, np.newaxis, :]
     f_rx = (config.gravity * config.planet_mass /
             np.maximum(1e-12, (rx ** 2).sum(axis=2)))
@@ -154,14 +154,14 @@ def _gravity(planets, x, config):
 
 
 def _mask(bodies, mask):
-    '''Only select bodies for which mask is true.
+    """Only select bodies for which mask is true.
 
     bodies -- astro.Bodies
 
     mask -- np.array(N; bool) -- selects bodies to keep
 
     returns -- astro.Bodies
-    '''
+    """
     return Bodies(
         x=bodies.x[mask],
         dx=bodies.dx[mask],
@@ -169,7 +169,7 @@ def _mask(bodies, mask):
 
 
 def _update_bodies(bodies, a, db, dt, cull_on_exit):
-    '''Compute the movement update for 'bodies'.
+    """Compute the movement update for 'bodies'.
 
     bodies -- astro.Bodies -- to update
 
@@ -183,7 +183,7 @@ def _update_bodies(bodies, a, db, dt, cull_on_exit):
                     wrapping
 
     returns -- astro.Bodies
-    '''
+    """
     # the approximation (dx + dx') / 2 for updating position seems to lead
     # to instability, so just using dx' here
     dx = bodies.dx + a * dt
@@ -198,7 +198,7 @@ def _update_bodies(bodies, a, db, dt, cull_on_exit):
 
 
 def _collisions(x, r):
-    '''Compute a collision mask between the objects at positions 'xs', with
+    """Compute a collision mask between the objects at positions 'xs', with
     radiuses 'rs'.
 
     x -- array(N x 2) -- positions
@@ -206,14 +206,14 @@ def _collisions(x, r):
     r -- array(N) -- radiuses
 
     returns -- array(N; bool) -- collisions
-    '''
+    """
     rx2 = ((x[np.newaxis, :, :] - x[:, np.newaxis, :]) ** 2).sum(axis=2)
     r2 = (r[np.newaxis, :] + r[:, np.newaxis]) ** 2
     return ((rx2 < r2) & ~np.eye(x.shape[0], dtype=np.bool)).any(axis=1)
 
 
 def step(state, control, config):
-    '''Advance the world state by a single tick of the game clock.
+    """Advance the world state by a single tick of the game clock.
 
     state -- astro.State -- old state of the world
 
@@ -230,7 +230,7 @@ def step(state, control, config):
 
     returns -- (astro.State or None, array([2; float])) -- next state and
                reward for each ship
-    '''
+    """
     ships_a = (config.ship_thrust *
                (control % 2)[:, np.newaxis] *
                util.direction(state.ships.b) +
@@ -304,7 +304,7 @@ def step(state, control, config):
 
 
 def roll_ships(state, index):
-    '''Roll the ships in "state", so that bots can play against each other,
+    """Roll the ships in "state", so that bots can play against each other,
     and "my bot" is always at index 0.
 
     state -- astro.State or None
@@ -312,7 +312,7 @@ def roll_ships(state, index):
     index -- int -- index that should be moved to zero
 
     returns -- astro.State or None
-    '''
+    """
     if state is None:
         return None
     s = state.ships
@@ -329,30 +329,30 @@ def roll_ships(state, index):
 
 class Bot:
     def __call__(self, state):
-        '''Called to get the bot's control output for a given state.
+        """Called to get the bot's control output for a given state.
 
         state -- astro.State
 
         returns -- int -- control signal (see `step`)
-        '''
+        """
         raise NotImplementedError
 
     def reward(self, state, reward):
-        '''Called to inform the bot of a reward in the given new state.
+        """Called to inform the bot of a reward in the given new state.
 
         state -- astro.State
 
         reward -- float -- game reward signal
-        '''
+        """
         pass
 
     @property
     def data(self):
-        '''Get internal data from the bot, to be saved alongside the log,
+        """Get internal data from the bot, to be saved alongside the log,
         if available.
 
         returns -- jsonable object
-        '''
+        """
         pass
 
 
@@ -375,14 +375,14 @@ class Bots:
 
 
 def play(config, bots):
-    '''Play out the game between bot_0 & bot_1.
+    """Play out the game between bot_0 & bot_1.
 
     config -- astro.Config
 
     bots -- [Bot] -- bots to play, where each bot should be like `astro.Bot`
 
     returns -- astro.Game -- including game outcome
-    '''
+    """
     ticks = []
     state = create(config)
     while True:
@@ -411,12 +411,12 @@ def play(config, bots):
 
 
 def save_log(path, game):
-    '''Saves a game log as jsonlines.
+    """Saves a game log as jsonlines.
 
     path -- string -- file path
 
     game -- astro.Game
-    '''
+    """
     dir_ = os.path.dirname(path)
     if not os.path.isdir(dir_):
         os.makedirs(dir_)
@@ -428,12 +428,12 @@ def save_log(path, game):
 
 
 def load_log(path):
-    '''Load a game log from file.
+    """Load a game log from file.
 
     path -- string -- file path
 
     returns -- astro.Game
-    '''
+    """
     with open(path, 'r') as f:
         header = util.from_json(next(f))
         ticks = [util.from_json(line) for line in f]

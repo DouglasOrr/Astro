@@ -5,8 +5,8 @@ import itertools as it
 
 
 def vdiff(v1, v2):
-    '''Returns the cartesian distance between the values in two autograd Variables.
-    '''
+    """Returns the cartesian distance between the values in two autograd Variables.
+    """
     return util.mag(v1.data.numpy() - v2.data.numpy())
 
 
@@ -48,7 +48,7 @@ def test_execute_batch():
 # Some more advanced testing
 
 def change_to_crash(config, state, random):
-    '''Change a single "solo easy" state to a "crash" state.'''
+    """Change a single "solo easy" state to a "crash" state."""
     assert state.ships.x.shape[0] == 1
     x = config.planet_radius * util.direction(random.uniform(0, 2 * np.pi))
     # keep ships dx=0 (for now)
@@ -57,7 +57,7 @@ def change_to_crash(config, state, random):
 
 
 def change_to_noncrash(config, state, random):
-    '''Change a single "solo easy" state to a random "not crashed" state.'''
+    """Change a single "solo easy" state to a random "not crashed" state."""
     assert state.ships.x.shape[0] == 1
     assert state.planets.x.shape[0] == 1
     # use rejection sampling to generate a "non-crash"
@@ -71,7 +71,7 @@ def change_to_noncrash(config, state, random):
 
 
 def gen_crash_states(config, ncrash, n, random):
-    '''Generate fake states & rewards for an imaginary set of crashes &
+    """Generate fake states & rewards for an imaginary set of crashes &
     non-crashes, for testing learnability.
 
     config -- astro.Config -- base config to use
@@ -83,7 +83,7 @@ def gen_crash_states(config, ncrash, n, random):
     random -- np.random.RandomState
 
     returns -- [astro.State], array(n) -- states, rewards
-    '''
+    """
     if not config.solo and config.max_planets == 1:
         raise ValueError(
             'gen_crash_states only supports solo configurations'

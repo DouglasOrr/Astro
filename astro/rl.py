@@ -7,9 +7,9 @@ from . import util, core
 
 
 class EpsilonGreedy:
-    '''A stateful bot which returns an action according to a random policy, or
+    """A stateful bot which returns an action according to a random policy, or
     `None` if the random policy should not be active.
-    '''
+    """
     def __init__(self, t_in, t_out, seed):
         self.t_in, self.t_out = t_in, t_out
         self._random = np.random.RandomState(seed)
@@ -29,8 +29,8 @@ class EpsilonGreedy:
 
 
 class ValueNetwork(T.nn.Module):
-    '''Deep Q learning RL network for playing astro.
-    '''
+    """Deep Q learning RL network for playing astro.
+    """
     @staticmethod
     def get_features_shape(state):
         return (
@@ -40,14 +40,14 @@ class ValueNetwork(T.nn.Module):
 
     @classmethod
     def get_features(cls, state):
-        '''Create the feature vector from the current state.
+        """Create the feature vector from the current state.
         A little feature engineering here to make the model's job easier
         - concatenate the ships feature vector onto every other object.
 
         state -- astro.State
 
         returns -- array(N x D) -- feature array (floats)
-        '''
+        """
         def feature(bodies):
             return np.concatenate(
                 (bodies.x, bodies.dx) +
@@ -72,7 +72,7 @@ class ValueNetwork(T.nn.Module):
 
     @staticmethod
     def to_batch(features):
-        '''Put a list of features into a batch.
+        """Put a list of features into a batch.
 
         states -- [array(N_f x D)] -- B features (from `get_features`)
 
@@ -80,7 +80,7 @@ class ValueNetwork(T.nn.Module):
                    note that result[:, :, 0] - which is the feature
                    "object type" should be used as a mask - all features with
                    (result[:, :, 0] < 0) should be skipped
-        '''
+        """
         if any(f.shape[1] != features[0].shape[1] for f in features):
             raise ValueError(
                 'Feature dimensions do not match - cannot mix solo & nonsolo'
@@ -99,7 +99,7 @@ class ValueNetwork(T.nn.Module):
 
     @classmethod
     def get_features_batch(cls, states):
-        '''As `get_features`, but for a batch of states.
+        """As `get_features`, but for a batch of states.
 
         states -- [astro.State] -- B states
 
@@ -107,12 +107,12 @@ class ValueNetwork(T.nn.Module):
                    note that result[:, :, 0] - which is the feature
                    "object type" should be used as a mask - all features with
                    (result[:, :, 0] < 0) should be skipped
-        '''
+        """
         return cls.to_batch([cls.get_features(s) for s in states])
 
     @staticmethod
     def masked_max(x, features):
-        '''Max-pooling over axis -2, with masking according to the
+        """Max-pooling over axis -2, with masking according to the
         "object type" field (features[..., 0] < 0).
 
         x -- Variable[B x N x X] -- processed features
@@ -120,7 +120,7 @@ class ValueNetwork(T.nn.Module):
         features -- Variable[B x N x F] -- original feature values for masking
 
         returns -- Variable[B x X] -- masked & pooled
-        '''
+        """
         # Torch doesn't like np.inf here, so just use a large value
         xm = x - 1e9 * (
             features[..., 0] < 0)[..., np.newaxis].type(x.data.type())
@@ -128,8 +128,8 @@ class ValueNetwork(T.nn.Module):
 
     @staticmethod
     def masked_sum(x, features):
-        '''As masked_max (but performs sum-pooling).
-        '''
+        """As masked_max (but performs sum-pooling).
+        """
         xm = x * (0 <= features[..., 0])[..., np.newaxis].type(x.data.type())
         return T.sum(xm, -2)
 
@@ -171,9 +171,9 @@ class ValueNetwork(T.nn.Module):
 
 
 class QBot(core.Bot):
-    '''A basic "evaluation mode" Q-learning bot with no epsilon-greedy
+    """A basic "evaluation mode" Q-learning bot with no epsilon-greedy
     policy & no training.
-    '''
+    """
     def __init__(self, network):
         self.q = network
         self._last_q = None
@@ -222,8 +222,8 @@ class QBotTrainer(QBot):
         return action
 
     def _step(self):
-        '''Sample from the replay buffer, and take an optimization step.
-        '''
+        """Sample from the replay buffer, and take an optimization step.
+        """
         assert self.n_steps < self.n_samples
         if len(self._replay_buffer) <= self.n_samples:
             xps = self._replay_buffer
@@ -287,8 +287,8 @@ class QBotTrainer(QBot):
 
     @staticmethod
     def average_step_loss(steps):
-        '''Compute the average (weighted) loss from a sequence of steps.
-        '''
+        """Compute the average (weighted) loss from a sequence of steps.
+        """
         loss, n = 0, 0
         for step in steps:
             loss += step['loss']

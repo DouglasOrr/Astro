@@ -1,9 +1,14 @@
 flake8
+flake8-quotes
 flask
 jupyter
 lru-dict
 numpy
 pandas
+pydocstyle
+pylint
 pytest
+pytest-cov
 seaborn
 scipy
+tensorboardX

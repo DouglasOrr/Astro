@@ -4,15 +4,15 @@ from . import util, core
 
 
 class NothingBot:
-    '''Doesn't do anything!
-    '''
+    """Doesn't do anything!
+    """
     def __call__(self, state):
         return 2
 
 
 class ScriptBot:
-    '''Tries to stay alive first, otherwise tries to shoot you.
-    '''
+    """Tries to stay alive first, otherwise tries to shoot you.
+    """
     # these values optimized using a random walk 1-vs-1 tournament
     DEFAULT_ARGS = dict(
         avoid_distance=0.1,
@@ -39,7 +39,7 @@ class ScriptBot:
             return 2
 
     def _danger(self, x, dx, b):
-        '''Am I in danger of crashing into this planet?
+        """Am I in danger of crashing into this planet?
 
         x -- array(2) -- my position, relative to planet
 
@@ -49,7 +49,7 @@ class ScriptBot:
 
         returns -- float or None -- bearing to take action, or `None`
                    if no action is required
-        '''
+        """
         radius = (self.config.planet_radius + self.config.ship_radius)
         b = 2 * util.dot(util.norm(dx), x)
         c = (util.mag(x) ** 2 - (radius + self.args['avoid_distance']) ** 2)
@@ -92,7 +92,7 @@ class ScriptBot:
 
     @staticmethod
     def mutate(args, scale, random):
-        '''Generate a local random mutation of `args`.
+        """Generate a local random mutation of `args`.
 
         args -- dict -- arguments
 
@@ -101,7 +101,7 @@ class ScriptBot:
         random -- numpy.random.RandomState -- random generator
 
         returns -- dict -- mutated arguments
-        '''
+        """
         args = args.copy()
         args['avoid_distance'] += scale * random.normal()
         args['avoid_threshold'] += scale * random.normal()
@@ -109,8 +109,8 @@ class ScriptBot:
 
     @classmethod
     def optimize(cls, config, max_trials, threshold, max_mutations, scale):
-        '''Optimize the arguments of this class, returning the best arguments.
-        '''
+        """Optimize the arguments of this class, returning the best arguments.
+        """
         random = np.random.RandomState(config.seed)
         best = cls.DEFAULT_ARGS
         sys.stderr.write('Initial {}\n'.format(best))
