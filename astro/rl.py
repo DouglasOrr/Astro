@@ -2,7 +2,8 @@ import numpy as np
 import torch as T
 import itertools as it
 import functools as ft
-import sys
+import tensorboardX
+import logging
 from . import util, core
 
 
@@ -144,12 +145,6 @@ class ValueNetwork(T.nn.Module):
         self.v = T.nn.ModuleList([T.nn.Linear(nh, nh) for _ in range(d)])
         self.v0 = T.nn.Linear(nh, nout)
 
-        # self.opt = T.optim.Adam(self.parameters(), lr=1e-3)
-        # self.opt = T.optim.Rprop(self.parameters())
-        # self.opt = T.optim.RMSprop(self.parameters(), eps=1e-3)
-        # self.opt = T.optim.Adagrad(self.parameters())
-        self.opt = T.optim.SGD(self.parameters(), lr=1e-2)
-
     def forward(self, x):
         f = ft.reduce(
             lambda a, layer: layer(self.activation(a)),
@@ -170,6 +165,33 @@ class ValueNetwork(T.nn.Module):
                 self.get_features_batch(states))))
 
 
+class QNetworkTrainer:
+    def __init__(self, network, writer):
+        self.q = network
+        self.nstep = 0
+        # self._opt = T.optim.Adam(self.q.parameters(), lr=1e-3)
+        # self._opt = T.optim.Rprop(self.q.parameters())
+        # self._opt = T.optim.RMSprop(self.q.parameters(), eps=1e-3)
+        # self._opt = T.optim.Adagrad(self.q.parameters())
+        self._opt = T.optim.SGD(self.q.parameters(), lr=1e-2)
+        self._writer = writer
+
+    def step(self, inputs, actions, targets):
+        inputs = T.autograd.Variable(T.FloatTensor(inputs))
+        actions = T.autograd.Variable(T.LongTensor(actions))
+        targets = T.autograd.Variable(T.FloatTensor(targets))
+
+        y = self.q(inputs).gather(1, actions.view(-1, 1)).view(-1)
+        losses = (targets - y) ** 2
+        loss = losses.mean()
+        self._opt.zero_grad()
+        loss.backward()
+        self._opt.step()
+        self._writer.add_scalar('train/loss', float(loss), self.nstep)
+        self.nstep += 1
+        return losses.data.numpy()
+
+
 class QBot(core.Bot):
     """A basic "evaluation mode" Q-learning bot with no epsilon-greedy
     policy & no training.
@@ -188,23 +210,37 @@ class QBot(core.Bot):
 
 
 class Experience:
-    __slots__ = ('feature', 'action', 'reward', 'loss')
+    __slots__ = (
+        'state_f',
+        'action',
+        'reward',
+        'discount',
+        'new_state_f',
+        'loss',
+    )
 
-    def __init__(self, feature, action, reward):
-        self.feature = feature
+    def __init__(self, state_f, action, reward, discount, new_state_f):
+        self.state_f = state_f
         self.action = action
         self.reward = reward
+        self.discount = discount
+        self.new_state_f = new_state_f
         self.loss = np.inf
 
 
 class QBotTrainer(QBot):
-    def __init__(self, network, seed):
-        super().__init__(network)
-        self.greedy = EpsilonGreedy(t_in=1.0, t_out=0.1, seed=seed)
-        self.n_steps = 10
-        self.discount = 0.99
-        self.n_samples = 128
-        self.max_replay = 100000
+    def __init__(self, trainer, seed):
+        super().__init__(trainer.q)
+        self.trainer = trainer
+        self.greedy = EpsilonGreedy(
+            t_in=1.0,  # 1.0
+            t_out=0.1,  # 0.1
+            seed=seed)
+        self.n_steps = 100  # 100
+        self.n_ministeps = 1  # 1
+        self.discount = 0.995  # 0.995
+        self.n_samples = 1024  # 1024
+        self.max_replay = 1000000  # 1000000
         self._nstep_buffer = []
         self._replay_buffer = []
         self._data = dict(greedy=None, q=None)
@@ -224,93 +260,99 @@ class QBotTrainer(QBot):
     def _step(self):
         """Sample from the replay buffer, and take an optimization step.
         """
-        assert self.n_steps < self.n_samples
-        if len(self._replay_buffer) <= self.n_samples:
-            xps = self._replay_buffer
+        xps, scored = util.partition(
+            self._replay_buffer, lambda d: np.isinf(d.loss))
+        assert len(xps) < self.n_samples
+        if len(xps) + len(scored) < self.n_samples:
+            xps += scored
         else:
-            xps = self._replay_buffer[-self.n_steps:]
-            sbuf = self._replay_buffer[:-self.n_steps]
-            weights = np.array([d.loss for d in sbuf], dtype=np.float32)
+            weights = np.array([d.loss for d in scored], dtype=np.float32)
             weights /= weights.sum()
-            for i in self._random.choice(
-                    np.arange(len(sbuf)),
-                    size=self.n_samples - self.n_steps,
-                    replace=False,
-                    p=weights):
-                xps.append(sbuf[i])
+            xps += [scored[i]
+                    for i in self._random.choice(
+                            np.arange(len(scored)),
+                            size=self.n_samples - len(xps),
+                            replace=False,
+                            p=weights)]
 
-        inputs = T.autograd.Variable(T.FloatTensor(ValueNetwork.to_batch(
-            [d.feature for d in xps])))
-        actions = T.autograd.Variable(T.LongTensor([d.action for d in xps]))
-        targets = T.autograd.Variable(T.FloatTensor([d.reward for d in xps]))
+        # Move nonterminals to the front, then evaluate their discounted max
+        # reward using the Q function
+        xps.sort(key=lambda d: d.new_state_f is None)
+        targets = np.array([d.reward for d in xps])
+        nonterminal = sum(1 if d.new_state_f is not None else 0 for d in xps)
+        if nonterminal:
+            discounts = np.array([d.discount for d in xps[:nonterminal]])
+            max_rewards = T.max(
+                self.q(T.autograd.Variable(T.FloatTensor(
+                    self.q.to_batch(
+                        [d.new_state_f for d in xps[:nonterminal]])))),
+                dim=-1
+            )[0].data.numpy()
+            targets[:nonterminal] = discounts * max_rewards
 
-        y = self.q(inputs).gather(1, actions.view(-1, 1)).view(-1)
-        losses = (targets - y) ** 2
-        loss = losses.sum()
-        self.q.opt.zero_grad()
-        (loss / targets.nelement()).backward()
-        self.q.opt.step()
+        losses = self.trainer.step(
+            inputs=self.q.to_batch([d.state_f for d in xps]),
+            actions=np.array([d.action for d in xps]),
+            targets=targets)
 
-        for l, xp in zip(losses, xps):
-            xp.loss = float(l)
-        return dict(loss=float(loss), n=targets.nelement())
+        for loss, xp in zip(losses, xps):
+            xp.loss = float(loss)
+
+        return dict(loss=losses.sum(), n=len(xps))
 
     def reward(self, new_state, reward):
         if new_state is None or self.n_steps <= len(self._nstep_buffer):
-            # Update the replay buffer with the new (state, action, reward)s
-            # we know there are only rewards for terminating states, in this
+            # Update the replay buffer with the new experiences.
+            # We know there are only rewards for terminating states in this
             # game, so no need to store any others
-            discounted_reward = (
-                reward
+            new_state_feature = (
+                None
                 if new_state is None else
-                self.discount * float(T.max(self.q.evaluate(new_state))))
+                self.q.get_features(new_state))
             for n, (feature, action) in enumerate(self._nstep_buffer):
-                p = len(self._nstep_buffer) - 1 - n
-                r = discounted_reward * (self.discount ** p)
-                self._replay_buffer.append(Experience(feature, action, r))
+                d = self.discount ** (len(self._nstep_buffer) - 1 - n)
+                self._replay_buffer.append(Experience(
+                    state_f=feature,
+                    action=action,
+                    reward=reward * d,
+                    discount=self.discount * d,
+                    new_state_f=new_state_feature))
 
             # If the replay buffer is too long, throw some of it away
             if self.max_replay <= len(self._replay_buffer):
                 self._replay_buffer = self._replay_buffer[self.max_replay//2:]
 
-            # Sample from the replay buffer & take a step to reduce loss
-            self._data['step'] = self._step()
-
+            # Sample from the replay buffer & take step(s) to reduce loss
+            for _ in range(self.n_ministeps):
+                self._step()
             self._nstep_buffer.clear()
-        else:
-            if 'step' in self._data:
-                del self._data['step']
 
     @property
     def data(self):
         return self._data.copy()
 
-    @staticmethod
-    def average_step_loss(steps):
-        """Compute the average (weighted) loss from a sequence of steps.
-        """
-        loss, n = 0, 0
-        for step in steps:
-            loss += step['loss']
-            n += step['n']
-        return loss / n
 
+def train(config, interval, limit, out):
+    out = util.make_counted_dir(out)
+    logging.info('Logging training to: %s', out)
+    writer = tensorboardX.SummaryWriter(out)
 
-def train(config, interval, limit, log_prefix=None):
     network = ValueNetwork(solo=config.solo, nout=6)
-    train_bots = [QBotTrainer(network, seed=n)
+    trainer = QNetworkTrainer(network, writer=writer)
+    train_bots = [QBotTrainer(trainer, seed=n)
                   for n in range(1 if config.solo else 2)]
     eval_bots = [QBot(network)
                  for _ in range(1 if config.solo else 2)]
 
+    total_ticks = 0
     games = []
+    last_nsteps = 0
     for n, config in it.islice(enumerate(core.generate_configs(config)),
                                limit):
         if n % interval == 0:
             # Validate
             valid_game = core.play(config, eval_bots)
-            if log_prefix is not None:
-                core.save_log(log_prefix + '.{}.log'.format(n), valid_game)
+            core.save_log('{}/{}.log'.format(out, n), valid_game)
 
             msg = 'N: {}'.format(n)
             msg += '  VALID  t: {:.0f} s'.format(
@@ -318,30 +360,25 @@ def train(config, interval, limit, log_prefix=None):
             if n != 0:
                 msg += '  TRAIN  #t: {}  #s: {}'.format(
                     sum(len(g.ticks) for g in games),
-                    sum(1 if 'step' in data else 0
-                        for g in games
-                        for t in g.ticks
-                        for data in t.bot_data))
-                msg += '  L: {:.3g}  L_final: {:.3g}'.format(
-                    QBotTrainer.average_step_loss(
-                        data['step']
-                        for g in games
-                        for t in g.ticks
-                        for data in t.bot_data
-                        if 'step' in data),
-                    QBotTrainer.average_step_loss(
-                        data['step']
-                        for g in games
-                        for data in g.ticks[-1].bot_data
-                        if 'step' in data))
+                    trainer.nstep - last_nsteps)
                 msg += '  t: {:.0f} s'.format(
                     np.median([g.ticks[-1].state.t for g in games]))
                 if config.solo:
-                    msg += '  live: {:.0%}'.format(
+                    msg += '  survive: {:.0%}'.format(
                         np.mean([g.winner is not None for g in games]))
-            sys.stderr.write(msg + '\n')
-
+            logging.info(msg)
             games = []
+            last_nsteps = trainer.nstep
 
         # Train
         games.append(core.play(config, train_bots))
+        total_ticks += len(games[-1].ticks)
+        writer.add_scalar(
+            'total/ticks', total_ticks, trainer.nstep)
+        writer.add_scalar(
+            'total/games', n, trainer.nstep)
+        writer.add_scalar(
+            'game/duration', games[-1].ticks[-1].state.t, trainer.nstep)
+        if config.solo:
+            writer.add_scalar(
+                'game/survive', games[-1].winner is not None, trainer.nstep)

@@ -7,6 +7,7 @@ import subprocess
 IMAGE = 'astro'
 SERVER = 'astro-server'
 NOTEBOOK = 'astro-notebook'
+TENSORBOARD = 'astro-tensorboard'
 # >>> IPython.lib.passwd("astro")
 NOTEBOOK_PASSWORD = \
     'sha1:a148b9fcf1b4:fa83f953fbd59df90711b90119d8ab214fccff18'
@@ -67,18 +68,28 @@ def server(detach):
 
 
 def notebook():
-    sh('docker rm -f ${NOTEBOOK} || true',
-       NOTEBOOK=NOTEBOOK)
-    sh('docker run -d --name ${NOTEBOOK} -v `pwd`:/work -w /work'
+    sh('docker rm -f ${NAME} || true',
+       NAME=NOTEBOOK)
+    sh('docker run -d --name ${NAME} -v `pwd`:/work -w /work'
        ' -p 8888:8888 --ipc=host'
        ' ${IMAGE} bash -c "'
        'jupyter notebook'
        ' --allow-root --NotebookApp.password=${NOTEBOOK_PASSWORD} --ip=\'*\''
        '"',
-       NOTEBOOK=NOTEBOOK,
+       NAME=NOTEBOOK,
        IMAGE=IMAGE,
        NOTEBOOK_PASSWORD=NOTEBOOK_PASSWORD)
     print('Notebook server running at http://localhost:8888 password: "astro"')
+
+
+def tensorboard():
+    sh('docker rm -f ${NAME} || true',
+       NAME=TENSORBOARD)
+    sh('docker run -d --name ${NAME} -v `pwd`:/work -w /work'
+       ' -p 7777:7777 tensorflow/tensorflow:1.4.1-py3'
+       ' tensorboard --port 7777 --logdir out/',
+       NAME=TENSORBOARD)
+    print('Tensorboard running at http://localhost:7777')
 
 
 parser = argparse.ArgumentParser(
@@ -98,6 +109,8 @@ p.add_argument('-k', '--test-filter', help='Pytest filter expression')
 p.set_defaults(action=test)
 
 subs.add_parser('notebook').set_defaults(action=notebook)
+
+subs.add_parser('tensorboard').set_defaults(action=tensorboard)
 
 p = subs.add_parser('server')
 p.add_argument('-d', '--detach', action='store_true')

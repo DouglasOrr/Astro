@@ -4,6 +4,8 @@ import numpy as np
 import scipy.stats
 import cProfile
 import contextlib
+import os
+import re
 
 
 # to/from JSON
@@ -60,6 +62,24 @@ def from_json(s):
     numpy.array.
     """
     return from_jsonable(json.loads(s))
+
+
+# Random file handling
+
+def make_counted_dir(base):
+    """Make a fresh subdirectory of "base", using incrementing numbers.
+
+    base -- string -- directory to create the path in
+
+    returns -- string -- new, empty subdirectory
+    """
+    if not os.path.isdir(base):
+        os.makedirs(base)
+    existing = max([int(d) for d in os.listdir(base) if re.match(r'^\d+$', d)],
+                   default=-1)
+    path = os.path.join(base, '{:03d}'.format(existing + 1))
+    os.makedirs(path)
+    return path
 
 
 # Maths/geometry
@@ -129,6 +149,22 @@ def wrap_unit_square(x):
 
 
 # Other
+
+def partition(xs, key):
+    """Split xs by key, returning a list of matching elements and
+    a list of non-matching elements.
+
+    xs -- list -- items to partition
+
+    key -- f(x) -> bool -- partitioning function
+
+    returns -- (list, list) -- matches & non-matches
+    """
+    matches, not_matches = [], []
+    for x in xs:
+        (matches if key(x) else not_matches).append(x)
+    return matches, not_matches
+
 
 def p_better(nwins, nlosses):
     """Compute the probability of this being better, given the number

@@ -3,6 +3,7 @@ import collections
 import numpy as np
 import itertools as it
 import os
+import shutil
 from .. import util
 
 
@@ -22,6 +23,16 @@ def test_to_from_json():
         s = util.to_json(obj)
         json.loads(s)
         assert util.from_json(s) == obj
+
+
+def test_make_counted_dir():
+    assert util.make_counted_dir('/tmp/astro/whatsit') \
+        == '/tmp/astro/whatsit/000'
+    assert util.make_counted_dir('/tmp/astro/whatsit') \
+        == '/tmp/astro/whatsit/001'
+    assert util.make_counted_dir('/tmp/astro/whatsit') \
+        == '/tmp/astro/whatsit/002'
+    shutil.rmtree('/tmp/astro/whatsit')
 
 
 def _check_batchable(fn, inputs, outputs, atol=1e-6):
