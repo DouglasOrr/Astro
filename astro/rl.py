@@ -152,7 +152,7 @@ class ValueNetwork(T.nn.Module):
         v = ft.reduce(
             lambda a, layer: self.activation(layer(a)),
             self.v, self.pool(f, features=x))
-        return T.tanh(self.v0(v))
+        return self.v0(v)
 
     def evaluate(self, state):
         return self(T.autograd.Variable(
@@ -173,7 +173,7 @@ class QNetworkTrainer:
         # self._opt = T.optim.Rprop(self.q.parameters())
         # self._opt = T.optim.RMSprop(self.q.parameters(), eps=1e-3)
         # self._opt = T.optim.Adagrad(self.q.parameters())
-        self._opt = T.optim.SGD(self.q.parameters(), lr=1e-2)
+        self._opt = T.optim.SGD(self.q.parameters(), lr=1e-3)
         self._writer = writer
 
     def step(self, inputs, actions, targets):
@@ -236,9 +236,9 @@ class QBotTrainer(QBot):
             t_in=1.0,  # 1.0
             t_out=0.1,  # 0.1
             seed=seed)
-        self.n_steps = 100  # 100
+        self.n_steps = 10  # 100
         self.n_ministeps = 1  # 1
-        self.discount = 0.995  # 0.995
+        self.discount = 0.99  # 0.995
         self.n_samples = 1024  # 1024
         self.max_replay = 1000000  # 1000000
         self._nstep_buffer = []
@@ -273,7 +273,8 @@ class QBotTrainer(QBot):
                             np.arange(len(scored)),
                             size=self.n_samples - len(xps),
                             replace=False,
-                            p=weights)]
+                            #p=weights
+                    )]
 
         # Move nonterminals to the front, then evaluate their discounted max
         # reward using the Q function
@@ -288,7 +289,7 @@ class QBotTrainer(QBot):
                         [d.new_state_f for d in xps[:nonterminal]])))),
                 dim=-1
             )[0].data.numpy()
-            targets[:nonterminal] = discounts * max_rewards
+            targets[:nonterminal] += discounts * max_rewards
 
         losses = self.trainer.step(
             inputs=self.q.to_batch([d.state_f for d in xps]),
@@ -301,6 +302,7 @@ class QBotTrainer(QBot):
         return dict(loss=losses.sum(), n=len(xps))
 
     def reward(self, new_state, reward):
+        self._nstep_buffer[-1] += (reward,)
         if new_state is None or self.n_steps <= len(self._nstep_buffer):
             # Update the replay buffer with the new experiences.
             # We know there are only rewards for terminating states in this
@@ -309,13 +311,16 @@ class QBotTrainer(QBot):
                 None
                 if new_state is None else
                 self.q.get_features(new_state))
-            for n, (feature, action) in enumerate(self._nstep_buffer):
-                d = self.discount ** (len(self._nstep_buffer) - 1 - n)
+            new_state_discount = 1
+            discount_reward = 0
+            for (feature, action, reward) in self._nstep_buffer[::-1]:
+                new_state_discount *= self.discount
+                discount_reward = self.discount * discount_reward + reward
                 self._replay_buffer.append(Experience(
                     state_f=feature,
                     action=action,
-                    reward=reward * d,
-                    discount=self.discount * d,
+                    reward=discount_reward,
+                    discount=new_state_discount,
                     new_state_f=new_state_feature))
 
             # If the replay buffer is too long, throw some of it away

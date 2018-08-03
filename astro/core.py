@@ -251,13 +251,15 @@ def step(state, control, config):
             np.zeros(state.bullets.x.shape[0])), axis=0))
 
     if collisions[:nships].any():
-        # End of game (collision)
-        return None, (1 - 2 * collisions[:nships])
+        # End of game (collision) - return a larger final reward (unless solo)
+        reward = (np.zeros(nships, dtype=np.float32)
+                  if config.solo else
+                  (10 * (1 - 2 * collisions[:nships])).astype(np.float32))
+        return None, reward
 
     if config.max_time <= state.t + config.dt:
         # End of game (timeout) - return reward & terminating state
-        # (in solo games, this counts as a win)
-        return None, np.full(nships, 1 if config.solo else 0, dtype=np.float32)
+        return None, np.ones(nships, dtype=np.float32)
 
     # fire bullets
     next_reload = state.reload + config.dt
@@ -300,7 +302,7 @@ def step(state, control, config):
             cull_on_exit=True),
         reload=next_reload,
         t=state.t + config.dt)
-    return next_state, np.zeros(nships, dtype=np.float32)
+    return next_state, np.ones(nships, dtype=np.float32)
 
 
 def roll_ships(state, index):
